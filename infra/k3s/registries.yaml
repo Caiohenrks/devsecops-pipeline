@@ -1,0 +1,8 @@
+mirrors:
+  "nexus:8082":
+    endpoint:
+      - "http://nexus:8082"
+configs:
+  "nexus:8082":
+    tls:
+      insecure_skip_verify: true
