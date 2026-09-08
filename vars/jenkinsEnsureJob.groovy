@@ -66,31 +66,31 @@ devsecopsPipeline()
                 status() {
                     curl -s -o /dev/null -w "%{http_code}" -u "$JENKINS_API_USER:$JENKINS_API_TOKEN" "$1" || true
                 }
+                put_xml() {
+                    code=$(curl -s -o /tmp/jenkins-api.out -w "%{http_code}" \
+                      -u "$JENKINS_API_USER:$JENKINS_API_TOKEN" \
+                      -H "$(crumb)" -H "Content-Type: application/xml" \
+                      --data-binary @"$1" $2 "$3" || true)
+                    case "$code" in
+                      200|201|204|409) echo "HTTP $code $3" ;;
+                      *) echo "HTTP $code $3"; cat /tmp/jenkins-api.out; exit 1 ;;
+                    esac
+                }
 
                 folder_url="$JENKINS_API_URL/job/$JENKINS_JOB_FOLDER"
                 job_url="$folder_url/job/$JENKINS_JOB_NAME"
 
                 if [ "$(status "$folder_url/api/json")" = "404" ]; then
                     echo "Criando pasta $JENKINS_JOB_FOLDER"
-                    curl -sf -u "$JENKINS_API_USER:$JENKINS_API_TOKEN" \
-                      -H "$(crumb)" -H "Content-Type: application/xml" \
-                      --data-binary @folder.xml \
-                      "$JENKINS_API_URL/createItem?name=$JENKINS_JOB_FOLDER"
+                    put_xml folder.xml "" "$JENKINS_API_URL/createItem?name=$JENKINS_JOB_FOLDER"
                 fi
 
-                code="$(status "$job_url/api/json")"
-                if [ "$code" = "404" ]; then
+                if [ "$(status "$job_url/api/json")" = "404" ]; then
                     echo "Criando job $JENKINS_JOB_FOLDER/$JENKINS_JOB_NAME"
-                    curl -sf -u "$JENKINS_API_USER:$JENKINS_API_TOKEN" \
-                      -H "$(crumb)" -H "Content-Type: application/xml" \
-                      --data-binary @job.xml \
-                      "$folder_url/createItem?name=$JENKINS_JOB_NAME"
+                    put_xml job.xml "" "$folder_url/createItem?name=$JENKINS_JOB_NAME"
                 else
                     echo "Atualizando job $JENKINS_JOB_FOLDER/$JENKINS_JOB_NAME"
-                    curl -sf -u "$JENKINS_API_USER:$JENKINS_API_TOKEN" \
-                      -H "$(crumb)" -H "Content-Type: application/xml" \
-                      --data-binary @job.xml \
-                      -X POST "$job_url/config.xml"
+                    put_xml job.xml "-X POST" "$job_url/config.xml"
                 fi
             '''
         }
