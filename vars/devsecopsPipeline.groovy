@@ -9,32 +9,11 @@ def call(Map config = [:]) {
             COSIGN_IMAGE   = 'cgr.dev/chainguard/cosign:latest@sha256:2af5cabe038577e02b21be3b6e2622c2cd2659dcdef2bdc0fbf5f64e16965a88'
         }
 
-        triggers {
-            GenericTrigger(
-                genericVariables: [
-                    [key: 'ref', value: '$.ref'],
-                    [key: 'branch', value: '$.ref', regexpFilter: 'refs/heads/'],
-                    [key: 'repo_full_name', value: '$.repository.full_name'],
-                    [key: 'ssh_url', value: '$.repository.ssh_url'],
-                    [key: 'html_url', value: '$.repository.html_url'],
-                    [key: 'after', value: '$.after'],
-                    [key: 'commit_email', value: '$.head_commit.author.email'],
-                    [key: 'commit_author', value: '$.head_commit.author.name']
-                ],
-                token: 'build-and-push',
-                causeString: 'Gitea push on $repo_full_name ($branch)',
-                printContributedVariables: true,
-                printPostContent: true,
-                silentResponse: false,
-                regexpFilterText: '$ref',
-                regexpFilterExpression: '^refs/heads/.+$'
-            )
-        }
-
         stages {
             stage('Prepare environment') {
                 steps {
                     script {
+                        bindWebhookParams()
                         cleanWs()
                         env.k8sDir = (config.k8sDir ?: 'k8s') as String
                         env.dockerContext = (config.context ?: '.') as String
@@ -309,6 +288,7 @@ def call(Map config = [:]) {
             always {
                 archiveArtifacts artifacts: 'reports/*.json', allowEmptyArchive: true
                 script {
+                    recordLeadTime()
                     def toEmail = env.commitEmail ?: env.commit_email
                     if (!toEmail?.contains('@')) {
                         echo 'No commit author email; skipping notification'
@@ -316,6 +296,9 @@ def call(Map config = [:]) {
                     }
                     def errorHtml = env.PIPELINE_ERROR
                         ? "<p><b>Erro:</b> ${env.PIPELINE_ERROR}</p>"
+                        : ''
+                    def leadHtml = env.LEAD_TIME_SECONDS
+                        ? "<p><b>Lead time:</b> ${env.LEAD_TIME_SECONDS}s</p>"
                         : ''
                     emailext(
                         to: toEmail,
@@ -329,6 +312,7 @@ def call(Map config = [:]) {
                               <body style="font-family: sans-serif; line-height: 1.4;">
                                 <h2>Build ${currentBuild.currentResult}</h2>
                                 ${errorHtml}
+                                ${leadHtml}
                                 <p><b>Repo:</b> ${env.repo_full_name}</p>
                                 <p><b>Branch:</b> ${env.branch}</p>
                                 <p><b>Autor:</b> ${env.commitAuthor ?: env.commit_author} &lt;${toEmail}&gt;</p>
@@ -345,6 +329,42 @@ def call(Map config = [:]) {
                 sh "docker image rm -f '${env.image}' || true"
             }
         }
+    }
+}
+
+def bindWebhookParams() {
+    if (params.ref) { env.ref = params.ref }
+    if (params.branch) { env.branch = params.branch }
+    if (params.repo_full_name) { env.repo_full_name = params.repo_full_name }
+    if (params.ssh_url) { env.ssh_url = params.ssh_url }
+    if (params.html_url) { env.html_url = params.html_url }
+    if (params.after) { env.after = params.after }
+    if (params.commit_email) { env.commit_email = params.commit_email }
+    if (params.commit_author) { env.commit_author = params.commit_author }
+    if (params.commit_timestamp) { env.commit_timestamp = params.commit_timestamp }
+}
+
+def recordLeadTime() {
+    def raw = env.commit_timestamp ?: ''
+    if (!raw) {
+        return
+    }
+    try {
+        def instant
+        try {
+            instant = java.time.Instant.parse(raw)
+        } catch (Exception ignored) {
+            instant = java.time.OffsetDateTime.parse(raw).toInstant()
+        }
+        def seconds = java.time.Duration.between(instant, java.time.Instant.now()).seconds
+        env.LEAD_TIME_SECONDS = "${seconds}"
+        echo "Lead time for changes: ${seconds}s (commit ${raw} → agora)"
+        def desc = currentBuild.description ?: ''
+        if (!desc.contains('LT ')) {
+            currentBuild.description = desc ? "${desc} · LT ${seconds}s" : "LT ${seconds}s"
+        }
+    } catch (Exception e) {
+        echo "Lead time: timestamp inválido (${raw}): ${e.message}"
     }
 }
 

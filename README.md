@@ -36,7 +36,16 @@ Manage Jenkins → System → **Global Trusted Pipeline Libraries**:
 
 Sem override, `@Library('devsecops@outra-branch')` não troca a pipeline.
 
-O job genérico (`docker-build-and-push`) deve usar o Jenkinsfile **deste** repo (ou o da raiz do curso). Assim um push no app não troca as stages.
+O job `docker-build-and-push` usa o Jenkinsfile **deste** repo e chama `devsecopsDispatch()`. Ele é o único webhook (`token=build-and-push`).
+
+Por serviço, o dispatcher cria `services/<owner>-<repo>` (API do Jenkins, sem Job DSL e sem plugin Gitea) com:
+
+```groovy
+@Library('devsecops') _
+devsecopsPipeline()
+```
+
+Métricas (frequência, falha, lead time) leem o job do serviço, não o dispatcher. `admin/devsecops-pipeline` e `admin/curso` são ignorados.
 
 ## O que o serviço pode passar
 

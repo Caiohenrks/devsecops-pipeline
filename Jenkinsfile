@@ -1,3 +1,3 @@
 @Library('devsecops') _
 
-devsecopsPipeline()
+devsecopsDispatch()
