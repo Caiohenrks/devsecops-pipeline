@@ -174,33 +174,6 @@ Não é credencial da pipeline. Configure **Extended E-mail Notification** (host
 
 ---
 
-## Secrets no Kubernetes
-
-Os nomes abaixo são os do `kubectl get secret`. Não confundir com o ID da credencial Jenkins.
-
-| Secret | Namespace | Tipo | Chave | Quem cria |
-|---|---|---|---|---|
-| `nexus-registry` | de cada app (`crud-user`, `piadas`, `agente`, …) | `kubernetes.io/dockerconfigjson` | `.dockerconfigjson` | A pipeline (`kubectl create secret docker-registry`), a partir de `nexus-account` |
-| `jenkins-deploy-token` | `cicd` | `kubernetes.io/service-account-token` | `token` (e `ca.crt`) | `pipeline/infra/k3s/jenkins-deploy.yaml`. Esse token vai no arquivo do `k3s-kubeconfig` |
-| `openai` | `agente` | `Opaque` | `api-key` | Manual: `kubectl -n agente create secret generic openai --from-literal=api-key=sk-...` |
-
-O Deployment de cada serviço tem `imagePullSecrets: [{ name: nexus-registry }]`. Sem esse secret o k3s não puxa `nexus:8082`.
-
-## Arquivos e recursos fora do Jenkins
-
-| Item | Onde | Notas |
-|---|---|---|
-| Compose do lab | `pipeline/infra/docker-compose.yml` | `cd pipeline/infra && docker compose up -d --build` |
-| Par Cosign | `pipeline/infra/cosign/` (`docker run` + `generate-key-pair`) | `cosign.key` no `.gitignore`. Cadastre os três IDs acima |
-| RBAC de deploy | `pipeline/infra/k3s/jenkins-deploy.yaml` | `kubectl apply` **uma vez** com o kubeconfig admin |
-| Kubeconfig do SA | `pipeline/infra/cicd.yaml` | `kind: Config` — **não** dê `kubectl apply`. Vira a credencial `k3s-kubeconfig`. Recreate do k3s invalida o token |
-| `known_hosts` | `/var/jenkins_home/.ssh/known_hosts` | Sem isso o clone morre em *Host key verification failed* |
-| Webhook Gitea | cada repo de serviço → Push | `http://jenkins:8080/generic-webhook-trigger/invoke?token=dispatch` |
-| Allowlist Gitea | compose `GITEA__security__ALLOWED_HOST_LIST` | `jenkins,private,loopback` |
-| Secret `openai` | só no namespace `agente` | `kubectl -n agente create secret generic openai --from-literal=api-key=sk-...` (não é credencial Jenkins) |
-
-Não commitar `cicd.yaml`, `cosign.key` nem kubeconfig com token.
-
 ## Job `dispatch`
 
 Pipeline script from SCM → `git@gitea:admin/devsecops-pipeline.git` (Jenkinsfile deste repo: `devsecopsDispatch()`). **Não** aponte o SCM para `crud-user` / `piadas` / `agente`.
