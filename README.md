@@ -36,7 +36,7 @@ Manage Jenkins → System → **Global Trusted Pipeline Libraries**:
 
 Sem override, `@Library('devsecops@outra-branch')` não troca a pipeline.
 
-O job **`dispatch`** usa o Jenkinsfile **deste** repo (`devsecopsDispatch()`), **não** o do `crud-user`/`piadas`. SCM: `git@gitea:admin/devsecops-pipeline.git`. Token do webhook (Gitea): `build-and-push`.
+O job **`dispatch`** usa o Jenkinsfile **deste** repo (`devsecopsDispatch()`), **não** o do `crud-user`/`piadas`. SCM: `git@gitea:admin/devsecops-pipeline.git`. Token do webhook (Gitea): `dispatch`.
 
 Credencial **Username with password**, ID `jenkins-api`: usuário Jenkins + API token (usuário → Configure → API Token). O step `jenkinsEnsureJob` cria `services/<owner>-<repo>` via REST se não existir.
 

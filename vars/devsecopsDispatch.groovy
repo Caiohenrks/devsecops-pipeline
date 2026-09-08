@@ -15,7 +15,7 @@ def call(Map config = [:]) {
                     [key: 'commit_author', value: '$.head_commit.author.name'],
                     [key: 'commit_timestamp', value: '$.head_commit.timestamp']
                 ],
-                token: 'build-and-push',
+                token: 'dispatch',
                 causeString: 'Dispatch $repo_full_name ($branch)',
                 printContributedVariables: true,
                 printPostContent: true,
