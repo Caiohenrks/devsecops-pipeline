@@ -84,51 +84,57 @@ def call(Map config = [:]) {
                 parallel {
                     stage('Gitleaks') {
                         steps {
-                            sh """
-                                docker run --rm --volumes-from jenkins \
-                                  -w '${env.srcDir}' \
-                                  ${env.GITLEAKS_IMAGE} \
-                                  detect --source . --verbose \
-                                  --report-path '${env.reportsDir}/gitleaks.json' \
-                                  --report-format json
-                            """
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Gitleaks') {
+                                sh """
+                                    docker run --rm --volumes-from jenkins \
+                                      -w '${env.srcDir}' \
+                                      ${env.GITLEAKS_IMAGE} \
+                                      detect --source . --verbose \
+                                      --report-path '${env.reportsDir}/gitleaks.json' \
+                                      --report-format json
+                                """
+                            }
                         }
                     }
 
                     stage('Semgrep') {
                         steps {
-                            sh """
-                                docker run --rm --volumes-from jenkins \
-                                  --entrypoint sh \
-                                  ${env.SEMGREP_IMAGE} \
-                                  -c 'ln -sfn "${env.srcDir}" /src && semgrep scan --config auto --json-output="${env.reportsDir}/semgrep.json" /src'
-                            """
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Semgrep') {
+                                sh """
+                                    docker run --rm --volumes-from jenkins \
+                                      --entrypoint sh \
+                                      ${env.SEMGREP_IMAGE} \
+                                      -c 'ln -sfn "${env.srcDir}" /src && semgrep scan --config auto --json-output="${env.reportsDir}/semgrep.json" /src'
+                                """
+                            }
                         }
                     }
 
                     stage('Trivy FS') {
                         steps {
-                            sh """
-                                docker run --rm --volumes-from jenkins \
-                                  -v trivy-cache:/root/.cache \
-                                  -w '${env.srcDir}' \
-                                  ${env.TRIVY_IMAGE} \
-                                  fs --offline-scan --exit-code 0 .
-                            """
-                            sh """
-                                docker run --rm --volumes-from jenkins \
-                                  -v trivy-cache:/root/.cache \
-                                  -w '${env.srcDir}' \
-                                  ${env.TRIVY_IMAGE} \
-                                  fs --offline-scan --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
-                            """
-                            sh """
-                                docker run --rm --volumes-from jenkins \
-                                  -v trivy-cache:/root/.cache \
-                                  -w '${env.srcDir}' \
-                                  ${env.TRIVY_IMAGE} \
-                                  fs --offline-scan --quiet --exit-code 1 --severity HIGH,CRITICAL .
-                            """
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Trivy FS') {
+                                sh """
+                                    docker run --rm --volumes-from jenkins \
+                                      -v trivy-cache:/root/.cache \
+                                      -w '${env.srcDir}' \
+                                      ${env.TRIVY_IMAGE} \
+                                      fs --offline-scan --exit-code 0 .
+                                """
+                                sh """
+                                    docker run --rm --volumes-from jenkins \
+                                      -v trivy-cache:/root/.cache \
+                                      -w '${env.srcDir}' \
+                                      ${env.TRIVY_IMAGE} \
+                                      fs --offline-scan --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
+                                """
+                                sh """
+                                    docker run --rm --volumes-from jenkins \
+                                      -v trivy-cache:/root/.cache \
+                                      -w '${env.srcDir}' \
+                                      ${env.TRIVY_IMAGE} \
+                                      fs --offline-scan --quiet --exit-code 1 --severity HIGH,CRITICAL .
+                                """
+                            }
                         }
                     }
                 }
@@ -144,27 +150,29 @@ def call(Map config = [:]) {
 
             stage('Trivy image') {
                 steps {
-                    sh """
-                        docker run --rm \
-                          -v /var/run/docker.sock:/var/run/docker.sock \
-                          -v trivy-cache:/root/.cache \
-                          ${env.TRIVY_IMAGE} \
-                          image --exit-code 0 '${env.image}'
-                    """
-                    sh """
-                        docker run --rm --volumes-from jenkins \
-                          -v /var/run/docker.sock:/var/run/docker.sock \
-                          -v trivy-cache:/root/.cache \
-                          ${env.TRIVY_IMAGE} \
-                          image --exit-code 0 --format json --output '${env.reportsDir}/trivy-image.json' '${env.image}'
-                    """
-                    sh """
-                        docker run --rm \
-                          -v /var/run/docker.sock:/var/run/docker.sock \
-                          -v trivy-cache:/root/.cache \
-                          ${env.TRIVY_IMAGE} \
-                          image --quiet --exit-code 1 --severity HIGH,CRITICAL '${env.image}'
-                    """
+                    catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Trivy image') {
+                        sh """
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v trivy-cache:/root/.cache \
+                              ${env.TRIVY_IMAGE} \
+                              image --exit-code 0 '${env.image}'
+                        """
+                        sh """
+                            docker run --rm --volumes-from jenkins \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v trivy-cache:/root/.cache \
+                              ${env.TRIVY_IMAGE} \
+                              image --exit-code 0 --format json --output '${env.reportsDir}/trivy-image.json' '${env.image}'
+                        """
+                        sh """
+                            docker run --rm \
+                              -v /var/run/docker.sock:/var/run/docker.sock \
+                              -v trivy-cache:/root/.cache \
+                              ${env.TRIVY_IMAGE} \
+                              image --quiet --exit-code 1 --severity HIGH,CRITICAL '${env.image}'
+                        """
+                    }
                 }
             }
 

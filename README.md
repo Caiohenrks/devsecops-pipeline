@@ -54,3 +54,5 @@ devsecopsPipeline(
   context: '.'
 )
 ```
+
+Scan (Gitleaks, Semgrep, Trivy FS/image) que falha marca o stage e o job como **UNSTABLE**. Clone, build, Cosign e k8s continuam **FAILURE**.
