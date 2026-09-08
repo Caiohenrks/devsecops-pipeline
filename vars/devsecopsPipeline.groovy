@@ -216,7 +216,7 @@ def call(Map config = [:]) {
             stage('Kubernetes') {
                 steps {
                     withKubeConfig(
-                        credentialsId: 'k3s-deploy',
+                        credentialsId: 'k3s-kubeconfig',
                         serverUrl: 'https://host.docker.internal:6443'
                     ) {
                         withCredentials([
