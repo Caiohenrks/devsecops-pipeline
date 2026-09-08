@@ -38,7 +38,9 @@ def call(Map config = [:]) {
                     script {
                         def repo = (env.repo_full_name ?: '').trim()
                         if (!repo) {
-                            error('repo_full_name ausente no webhook. O dispatcher não sabe qual job criar.')
+                            echo 'Sem payload de webhook. Trigger registrado. Um push em piadas ou crud-user cria o job do serviço.'
+                            currentBuild.description = 'trigger registered'
+                            return
                         }
 
                         def skip = (config.skipRepos ?: ['admin/devsecops-pipeline', 'admin/curso']) as List
