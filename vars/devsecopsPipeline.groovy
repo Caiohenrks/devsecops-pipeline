@@ -120,7 +120,7 @@ def call(Map config = [:]) {
                                         docker run --rm --volumes-from jenkins \
                                           --entrypoint sh \
                                           ${env.SEMGREP_IMAGE} \
-                                          -c 'ln -sfn "${env.srcDir}" /src && git config --global --add safe.directory /src && semgrep scan --config auto --config p/java --json-output="${env.reportsDir}/semgrep.json" /src'
+                                          -c 'rm -rf /src && mkdir -p /src && cp -a "${env.srcDir}/." /src/ && rm -rf /src/.git && semgrep scan --config auto --config p/java --json-output="${env.reportsDir}/semgrep.json" /src'
                                     """
                                 }
                             }
@@ -133,21 +133,21 @@ def call(Map config = [:]) {
                                 recordFailure(
                                     'TRIVYFS_ERROR',
                                     'Trivy FS',
-                                    'HIGH/CRITICAL no filesystem, 429 do Maven Central, ou erro do scanner. Relatórios: reports/trivy-fs.txt e trivy-fs.json.'
+                                    'HIGH/CRITICAL no filesystem ou erro do scanner. Relatórios: reports/trivy-fs.txt e trivy-fs.json. CVE de dependência Java aparece no Trivy image.'
                                 ) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
-                                          fs --exit-code 0 --format table --output '${env.reportsDir}/trivy-fs.txt' .
+                                          fs --offline-scan --skip-files pom.xml --exit-code 0 --format table --output '${env.reportsDir}/trivy-fs.txt' .
                                     """
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
-                                          fs --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
+                                          fs --offline-scan --skip-files pom.xml --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
                                     """
                                     sh """
                                         cat '${env.reportsDir}/trivy-fs.txt'
@@ -157,7 +157,7 @@ def call(Map config = [:]) {
                                           -v trivy-cache:/root/.cache \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
-                                          fs --exit-code 1 --severity HIGH,CRITICAL --format table --output '${env.reportsDir}/trivy-fs-gate.txt' .
+                                          fs --offline-scan --skip-files pom.xml --exit-code 1 --severity HIGH,CRITICAL --format table --output '${env.reportsDir}/trivy-fs-gate.txt' .
                                     """
                                 }
                             }
