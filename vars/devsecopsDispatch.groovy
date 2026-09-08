@@ -54,7 +54,7 @@ def call(Map config = [:]) {
                         currentBuild.description = "dispatch ${fullName}"
                         echo "Disparando ${fullName}"
 
-                        build job: fullName, wait: true, propagate: true, parameters: [
+                        build job: fullName, wait: false, parameters: [
                             string(name: 'ref', value: env.ref ?: ''),
                             string(name: 'branch', value: env.branch ?: ''),
                             string(name: 'repo_full_name', value: repo),
