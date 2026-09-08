@@ -113,21 +113,21 @@ def call(Map config = [:]) {
                                   -v trivy-cache:/root/.cache \
                                   -w '${env.srcDir}' \
                                   ${env.TRIVY_IMAGE} \
-                                  fs --exit-code 0 .
+                                  fs --offline-scan --exit-code 0 .
                             """
                             sh """
                                 docker run --rm --volumes-from jenkins \
                                   -v trivy-cache:/root/.cache \
                                   -w '${env.srcDir}' \
                                   ${env.TRIVY_IMAGE} \
-                                  fs --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
+                                  fs --offline-scan --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
                             """
                             sh """
                                 docker run --rm --volumes-from jenkins \
                                   -v trivy-cache:/root/.cache \
                                   -w '${env.srcDir}' \
                                   ${env.TRIVY_IMAGE} \
-                                  fs --quiet --exit-code 1 --severity HIGH,CRITICAL .
+                                  fs --offline-scan --quiet --exit-code 1 --severity HIGH,CRITICAL .
                             """
                         }
                     }
