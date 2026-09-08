@@ -1,10 +1,3 @@
-import com.cloudbees.hudson.plugins.folder.Folder
-import hudson.model.ParametersDefinitionProperty
-import hudson.model.StringParameterDefinition
-import jenkins.model.Jenkins
-import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition
-import org.jenkinsci.plugins.workflow.job.WorkflowJob
-
 def call(Map config = [:]) {
     pipeline {
         agent any
@@ -38,7 +31,7 @@ def call(Map config = [:]) {
                     script {
                         def repo = (env.repo_full_name ?: '').trim()
                         if (!repo) {
-                            echo 'Sem payload de webhook. Trigger registrado. Um push em piadas ou crud-user cria o job do serviço.'
+                            echo 'Sem payload de webhook. Trigger registrado. Um push em um serviço cria o job.'
                             currentBuild.description = 'trigger registered'
                             return
                         }
@@ -51,11 +44,17 @@ def call(Map config = [:]) {
                             return
                         }
 
-                        def jobName = ensureServiceJob(repo)
-                        currentBuild.description = "dispatch ${jobName}"
-                        echo "Disparando ${jobName}"
+                        def jobName = repo.replaceAll('[^A-Za-z0-9_.-]', '-')
+                        def fullName = jenkinsEnsureJob(
+                            folder: 'services',
+                            name: jobName,
+                            displayName: repo,
+                            credentialsId: config.jenkinsCredentialsId ?: 'jenkins-api'
+                        )
+                        currentBuild.description = "dispatch ${fullName}"
+                        echo "Disparando ${fullName}"
 
-                        build job: jobName, wait: true, propagate: true, parameters: [
+                        build job: fullName, wait: true, propagate: true, parameters: [
                             string(name: 'ref', value: env.ref ?: ''),
                             string(name: 'branch', value: env.branch ?: ''),
                             string(name: 'repo_full_name', value: repo),
@@ -71,47 +70,4 @@ def call(Map config = [:]) {
             }
         }
     }
-}
-
-@NonCPS
-String ensureServiceJob(String repoFullName) {
-    def jobName = repoFullName.replaceAll('[^A-Za-z0-9_.-]', '-')
-    def jenkins = Jenkins.get()
-    def fullName
-
-    synchronized (jenkins) {
-        def folder = jenkins.getItem('services')
-        if (folder == null) {
-            folder = jenkins.createProject(Folder, 'services')
-        }
-
-        def job = folder.getItem(jobName)
-        if (job == null) {
-            job = folder.createProject(WorkflowJob, jobName)
-        }
-
-        job.setDisplayName(repoFullName)
-        job.setDefinition(new CpsFlowDefinition('''\
-@Library('devsecops') _
-
-devsecopsPipeline()
-'''.stripIndent(), true))
-
-        job.removeProperty(ParametersDefinitionProperty)
-        job.addProperty(new ParametersDefinitionProperty(
-            new StringParameterDefinition('ref', '', 'Git ref (refs/heads/...)'),
-            new StringParameterDefinition('branch', '', 'Branch'),
-            new StringParameterDefinition('repo_full_name', repoFullName, 'owner/repo'),
-            new StringParameterDefinition('ssh_url', '', 'Git SSH URL'),
-            new StringParameterDefinition('html_url', '', 'Repo HTML URL'),
-            new StringParameterDefinition('after', '', 'Commit SHA'),
-            new StringParameterDefinition('commit_email', '', 'Author email'),
-            new StringParameterDefinition('commit_author', '', 'Author name'),
-            new StringParameterDefinition('commit_timestamp', '', 'Commit timestamp (lead time)')
-        ))
-        job.save()
-        fullName = "services/${jobName}"
-    }
-
-    return fullName
 }

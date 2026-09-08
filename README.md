@@ -36,9 +36,15 @@ Manage Jenkins → System → **Global Trusted Pipeline Libraries**:
 
 Sem override, `@Library('devsecops@outra-branch')` não troca a pipeline.
 
-O job `docker-build-and-push` usa o Jenkinsfile **deste** repo e chama `devsecopsDispatch()`. Ele é o único webhook (`token=build-and-push`).
+O job `docker-build-and-push` usa o Jenkinsfile **deste** repo (`devsecopsDispatch()`), **não** o do `crud-user`/`piadas`. SCM: `git@gitea:admin/devsecops-pipeline.git`. Token do webhook: `build-and-push`.
 
-Por serviço, o dispatcher cria `services/<owner>-<repo>` (API do Jenkins, sem Job DSL e sem plugin Gitea) com:
+Credencial **Username with password**, ID `jenkins-api`: usuário Jenkins + API token (usuário → Configure → API Token). O step `jenkinsEnsureJob` cria `services/<owner>-<repo>` via REST se não existir.
+
+```groovy
+jenkinsEnsureJob(folder: 'services', name: 'admin-piadas', displayName: 'admin/piadas')
+```
+
+O job gerado chama:
 
 ```groovy
 @Library('devsecops') _
