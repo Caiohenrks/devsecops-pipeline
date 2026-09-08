@@ -118,9 +118,10 @@ def call(Map config = [:]) {
                                 ) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
+                                          -e CI=false \
                                           --entrypoint sh \
                                           ${env.SEMGREP_IMAGE} \
-                                          -c 'rm -rf /src && mkdir -p /src && cp -a "${env.srcDir}/." /src/ && rm -rf /src/.git && semgrep scan --config auto --config p/java --json-output="${env.reportsDir}/semgrep.json" /src'
+                                          -c 'mkdir -p /src && find /src -mindepth 1 -delete && cp -a "${env.srcDir}/." /src/ && rm -rf /src/.git && semgrep scan --config auto --json-output="${env.reportsDir}/semgrep.json" /src'
                                     """
                                 }
                             }
