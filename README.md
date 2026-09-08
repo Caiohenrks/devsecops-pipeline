@@ -55,4 +55,4 @@ devsecopsPipeline(
 )
 ```
 
-Scan (Gitleaks, Semgrep, Trivy FS/image) que falha marca o stage e o job como **UNSTABLE**. Clone, build, Cosign e k8s continuam **FAILURE**.
+Falha de stage é **FAILURE**. O `try/catch` só registra o motivo no console (e no e-mail) antes do `error()`. Os scans em paralelo terminam todos; o stage **Security gate** junta as mensagens e aborta.

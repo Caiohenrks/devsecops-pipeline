@@ -53,29 +53,34 @@ def call(Map config = [:]) {
             stage('Clone repository') {
                 steps {
                     script {
-                        def gitRef = (env.after ?: '').trim() ? env.after : "*/${env.branch}"
-                        checkout([
-                            $class: 'GitSCM',
-                            branches: [[name: gitRef]],
-                            extensions: [
-                                [$class: 'RelativeTargetDirectory', relativeTargetDir: env.branch]
-                            ],
-                            userRemoteConfigs: [[
-                                credentialsId: 'gitea-ssh',
-                                url: env.sshUrl
-                            ]]
-                        ])
-                        env.commit = env.after ?: sh(returnStdout: true, script: "git -C '${env.srcDir}' rev-parse HEAD").trim()
-                        env.commitEmail = env.commit_email ?: sh(returnStdout: true, script: "git -C '${env.srcDir}' log -1 --pretty=%ae").trim()
-                        env.commitAuthor = env.commit_author ?: sh(returnStdout: true, script: "git -C '${env.srcDir}' log -1 --pretty=%an").trim()
-                        env.shortSha = env.commit.substring(0, 12)
-                        env.image = "${env.registry}/${env.repo_full_name}:${env.shortSha}"
-                        env.k8sImage = "nexus:8082/docker/${env.repo_full_name}:${env.shortSha}"
-                        echo "Commit ${env.commit}"
-                        echo "Image ${env.image}"
-                        echo "K8s image ${env.k8sImage}"
-                        echo "Notify ${env.commitAuthor} <${env.commitEmail}>"
-                        currentBuild.description = "${env.repo_full_name} @ ${env.shortSha}"
+                        explainAndFail(
+                            'Clone',
+                            'Não foi possível clonar o repo no Gitea. Confira gitea-ssh, o SHA (after) e se o host gitea resolve na rede Docker.'
+                        ) {
+                            def gitRef = (env.after ?: '').trim() ? env.after : "*/${env.branch}"
+                            checkout([
+                                $class: 'GitSCM',
+                                branches: [[name: gitRef]],
+                                extensions: [
+                                    [$class: 'RelativeTargetDirectory', relativeTargetDir: env.branch]
+                                ],
+                                userRemoteConfigs: [[
+                                    credentialsId: 'gitea-ssh',
+                                    url: env.sshUrl
+                                ]]
+                            ])
+                            env.commit = env.after ?: sh(returnStdout: true, script: "git -C '${env.srcDir}' rev-parse HEAD").trim()
+                            env.commitEmail = env.commit_email ?: sh(returnStdout: true, script: "git -C '${env.srcDir}' log -1 --pretty=%ae").trim()
+                            env.commitAuthor = env.commit_author ?: sh(returnStdout: true, script: "git -C '${env.srcDir}' log -1 --pretty=%an").trim()
+                            env.shortSha = env.commit.substring(0, 12)
+                            env.image = "${env.registry}/${env.repo_full_name}:${env.shortSha}"
+                            env.k8sImage = "nexus:8082/docker/${env.repo_full_name}:${env.shortSha}"
+                            echo "Commit ${env.commit}"
+                            echo "Image ${env.image}"
+                            echo "K8s image ${env.k8sImage}"
+                            echo "Notify ${env.commitAuthor} <${env.commitEmail}>"
+                            currentBuild.description = "${env.repo_full_name} @ ${env.shortSha}"
+                        }
                     }
                 }
             }
@@ -84,57 +89,91 @@ def call(Map config = [:]) {
                 parallel {
                     stage('Gitleaks') {
                         steps {
-                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Gitleaks') {
-                                sh """
-                                    docker run --rm --volumes-from jenkins \
-                                      -w '${env.srcDir}' \
-                                      ${env.GITLEAKS_IMAGE} \
-                                      detect --source . --verbose \
-                                      --report-path '${env.reportsDir}/gitleaks.json' \
-                                      --report-format json
-                                """
+                            script {
+                                recordFailure(
+                                    'GITLEAKS_ERROR',
+                                    'Gitleaks',
+                                    'Secret no git ou o scanner saiu com erro. Relatório: reports/gitleaks.json.'
+                                ) {
+                                    sh """
+                                        docker run --rm --volumes-from jenkins \
+                                          -w '${env.srcDir}' \
+                                          ${env.GITLEAKS_IMAGE} \
+                                          detect --source . --verbose \
+                                          --report-path '${env.reportsDir}/gitleaks.json' \
+                                          --report-format json
+                                    """
+                                }
                             }
                         }
                     }
 
                     stage('Semgrep') {
                         steps {
-                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Semgrep') {
-                                sh """
-                                    docker run --rm --volumes-from jenkins \
-                                      --entrypoint sh \
-                                      ${env.SEMGREP_IMAGE} \
-                                      -c 'ln -sfn "${env.srcDir}" /src && semgrep scan --config auto --json-output="${env.reportsDir}/semgrep.json" /src'
-                                """
+                            script {
+                                recordFailure(
+                                    'SEMGREP_ERROR',
+                                    'Semgrep',
+                                    'O Semgrep falhou (parse, regra ou ferramenta). Relatório: reports/semgrep.json.'
+                                ) {
+                                    sh """
+                                        docker run --rm --volumes-from jenkins \
+                                          --entrypoint sh \
+                                          ${env.SEMGREP_IMAGE} \
+                                          -c 'ln -sfn "${env.srcDir}" /src && semgrep scan --config auto --json-output="${env.reportsDir}/semgrep.json" /src'
+                                    """
+                                }
                             }
                         }
                     }
 
                     stage('Trivy FS') {
                         steps {
-                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Trivy FS') {
-                                sh """
-                                    docker run --rm --volumes-from jenkins \
-                                      -v trivy-cache:/root/.cache \
-                                      -w '${env.srcDir}' \
-                                      ${env.TRIVY_IMAGE} \
-                                      fs --offline-scan --exit-code 0 .
-                                """
-                                sh """
-                                    docker run --rm --volumes-from jenkins \
-                                      -v trivy-cache:/root/.cache \
-                                      -w '${env.srcDir}' \
-                                      ${env.TRIVY_IMAGE} \
-                                      fs --offline-scan --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
-                                """
-                                sh """
-                                    docker run --rm --volumes-from jenkins \
-                                      -v trivy-cache:/root/.cache \
-                                      -w '${env.srcDir}' \
-                                      ${env.TRIVY_IMAGE} \
-                                      fs --offline-scan --quiet --exit-code 1 --severity HIGH,CRITICAL .
-                                """
+                            script {
+                                recordFailure(
+                                    'TRIVYFS_ERROR',
+                                    'Trivy FS',
+                                    'HIGH/CRITICAL no filesystem, 429 do Maven Central, ou erro do scanner. Relatório: reports/trivy-fs.json.'
+                                ) {
+                                    sh """
+                                        docker run --rm --volumes-from jenkins \
+                                          -v trivy-cache:/root/.cache \
+                                          -w '${env.srcDir}' \
+                                          ${env.TRIVY_IMAGE} \
+                                          fs --offline-scan --exit-code 0 .
+                                    """
+                                    sh """
+                                        docker run --rm --volumes-from jenkins \
+                                          -v trivy-cache:/root/.cache \
+                                          -w '${env.srcDir}' \
+                                          ${env.TRIVY_IMAGE} \
+                                          fs --offline-scan --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
+                                    """
+                                    sh """
+                                        docker run --rm --volumes-from jenkins \
+                                          -v trivy-cache:/root/.cache \
+                                          -w '${env.srcDir}' \
+                                          ${env.TRIVY_IMAGE} \
+                                          fs --offline-scan --quiet --exit-code 1 --severity HIGH,CRITICAL .
+                                    """
+                                }
                             }
+                        }
+                    }
+                }
+            }
+
+            stage('Security gate') {
+                steps {
+                    script {
+                        def failed = [
+                            env.GITLEAKS_ERROR,
+                            env.SEMGREP_ERROR,
+                            env.TRIVYFS_ERROR
+                        ].findAll { it }
+                        if (failed) {
+                            env.PIPELINE_ERROR = failed.join(' | ')
+                            error('Security scans falharam:\n- ' + failed.join('\n- '))
                         }
                     }
                 }
@@ -142,112 +181,136 @@ def call(Map config = [:]) {
 
             stage('Build image') {
                 steps {
-                    dir(env.branch) {
-                        sh "docker build -f '${env.dockerfile}' -t '${env.image}' '${env.dockerContext}'"
+                    script {
+                        explainAndFail(
+                            'Build image',
+                            'docker build falhou (Dockerfile, dependência ou download). A imagem não foi criada.'
+                        ) {
+                            dir(env.branch) {
+                                sh "docker build -f '${env.dockerfile}' -t '${env.image}' '${env.dockerContext}'"
+                            }
+                        }
                     }
                 }
             }
 
             stage('Trivy image') {
                 steps {
-                    catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', message: 'Trivy image') {
-                        sh """
-                            docker run --rm \
-                              -v /var/run/docker.sock:/var/run/docker.sock \
-                              -v trivy-cache:/root/.cache \
-                              ${env.TRIVY_IMAGE} \
-                              image --exit-code 0 '${env.image}'
-                        """
-                        sh """
-                            docker run --rm --volumes-from jenkins \
-                              -v /var/run/docker.sock:/var/run/docker.sock \
-                              -v trivy-cache:/root/.cache \
-                              ${env.TRIVY_IMAGE} \
-                              image --exit-code 0 --format json --output '${env.reportsDir}/trivy-image.json' '${env.image}'
-                        """
-                        sh """
-                            docker run --rm \
-                              -v /var/run/docker.sock:/var/run/docker.sock \
-                              -v trivy-cache:/root/.cache \
-                              ${env.TRIVY_IMAGE} \
-                              image --quiet --exit-code 1 --severity HIGH,CRITICAL '${env.image}'
-                        """
+                    script {
+                        explainAndFail(
+                            'Trivy image',
+                            'A imagem tem CVE HIGH/CRITICAL (ou o scanner falhou). Não segue para o Nexus. Relatório: reports/trivy-image.json.'
+                        ) {
+                            sh """
+                                docker run --rm \
+                                  -v /var/run/docker.sock:/var/run/docker.sock \
+                                  -v trivy-cache:/root/.cache \
+                                  ${env.TRIVY_IMAGE} \
+                                  image --exit-code 0 '${env.image}'
+                            """
+                            sh """
+                                docker run --rm --volumes-from jenkins \
+                                  -v /var/run/docker.sock:/var/run/docker.sock \
+                                  -v trivy-cache:/root/.cache \
+                                  ${env.TRIVY_IMAGE} \
+                                  image --exit-code 0 --format json --output '${env.reportsDir}/trivy-image.json' '${env.image}'
+                            """
+                            sh """
+                                docker run --rm \
+                                  -v /var/run/docker.sock:/var/run/docker.sock \
+                                  -v trivy-cache:/root/.cache \
+                                  ${env.TRIVY_IMAGE} \
+                                  image --quiet --exit-code 1 --severity HIGH,CRITICAL '${env.image}'
+                            """
+                        }
                     }
                 }
             }
 
             stage('Push image') {
                 steps {
-                    withCredentials([
-                        usernamePassword(credentialsId: 'nexus-account', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
-                        file(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
-                        file(credentialsId: 'cosign-pub', variable: 'COSIGN_PUB'),
-                        string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')
-                    ]) {
-                        sh 'echo "$NEXUS_PASS" | docker login 127.0.0.1:5000 -u "$NEXUS_USER" --password-stdin'
-                        sh "docker push '${env.image}'"
-                        script {
-                            def digest = sh(
-                                returnStdout: true,
-                                script: "docker inspect --format='{{index .RepoDigests 0}}' '${env.image}'"
-                            ).trim()
-                            env.imageRef = digest.replaceFirst('127.0.0.1:5000', 'nexus:8082')
-                            echo "Signing ${env.imageRef}"
+                    script {
+                        explainAndFail(
+                            'Push / Cosign',
+                            'Login/push no Nexus ou assinatura Cosign falhou. Confira nexus-account, cosign-key e a rede infra_devsecops-network.'
+                        ) {
+                            withCredentials([
+                                usernamePassword(credentialsId: 'nexus-account', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
+                                file(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
+                                file(credentialsId: 'cosign-pub', variable: 'COSIGN_PUB'),
+                                string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')
+                            ]) {
+                                sh 'echo "$NEXUS_PASS" | docker login 127.0.0.1:5000 -u "$NEXUS_USER" --password-stdin'
+                                sh "docker push '${env.image}'"
+                                def digest = sh(
+                                    returnStdout: true,
+                                    script: "docker inspect --format='{{index .RepoDigests 0}}' '${env.image}'"
+                                ).trim()
+                                env.imageRef = digest.replaceFirst('127.0.0.1:5000', 'nexus:8082')
+                                echo "Signing ${env.imageRef}"
+                                sh '''
+                                    docker run --rm --user 0 --volumes-from jenkins \
+                                      --network infra_devsecops-network \
+                                      -e COSIGN_PASSWORD \
+                                      "$COSIGN_IMAGE" \
+                                      sign --yes \
+                                      --allow-http-registry --allow-insecure-registry \
+                                      --registry-username "$NEXUS_USER" \
+                                      --registry-password "$NEXUS_PASS" \
+                                      --key "$COSIGN_KEY" \
+                                      "$imageRef"
+                                '''
+                                sh '''
+                                    docker run --rm --user 0 --volumes-from jenkins \
+                                      --network infra_devsecops-network \
+                                      "$COSIGN_IMAGE" \
+                                      verify \
+                                      --allow-http-registry --allow-insecure-registry \
+                                      --registry-username "$NEXUS_USER" \
+                                      --registry-password "$NEXUS_PASS" \
+                                      --key "$COSIGN_PUB" \
+                                      "$imageRef"
+                                '''
+                            }
                         }
-                        sh '''
-                            docker run --rm --user 0 --volumes-from jenkins \
-                              --network infra_devsecops-network \
-                              -e COSIGN_PASSWORD \
-                              "$COSIGN_IMAGE" \
-                              sign --yes \
-                              --allow-http-registry --allow-insecure-registry \
-                              --registry-username "$NEXUS_USER" \
-                              --registry-password "$NEXUS_PASS" \
-                              --key "$COSIGN_KEY" \
-                              "$imageRef"
-                        '''
-                        sh '''
-                            docker run --rm --user 0 --volumes-from jenkins \
-                              --network infra_devsecops-network \
-                              "$COSIGN_IMAGE" \
-                              verify \
-                              --allow-http-registry --allow-insecure-registry \
-                              --registry-username "$NEXUS_USER" \
-                              --registry-password "$NEXUS_PASS" \
-                              --key "$COSIGN_PUB" \
-                              "$imageRef"
-                        '''
                     }
                 }
             }
 
             stage('Kubernetes') {
                 steps {
-                    withKubeConfig(
-                        credentialsId: 'k3s-kubeconfig',
-                        serverUrl: 'https://host.docker.internal:6443'
-                    ) {
-                        withCredentials([
-                            usernamePassword(credentialsId: 'nexus-account', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')
-                        ]) {
-                            dir(env.branch) {
-                                sh '''
-                                    test -f "$k8sDir/namespace.yaml"
-                                    kubectl apply -f "$k8sDir/namespace.yaml"
-                                    NS="$(kubectl get -f "$k8sDir/namespace.yaml" -o jsonpath='{.metadata.name}')"
-                                    kubectl -n "$NS" create secret docker-registry nexus-registry \
-                                      --docker-server=nexus:8082 \
-                                      --docker-username="$NEXUS_USER" \
-                                      --docker-password="$NEXUS_PASS" \
-                                      --dry-run=client -o yaml | kubectl apply -f -
-                                '''
-                                sh "sed 's|PLACEHOLDER_IMAGE|${env.k8sImage}|g' '${env.k8sDir}/deployment.yaml' | kubectl apply -f -"
-                                sh '''
-                                    kubectl apply -f "$k8sDir/service.yaml"
-                                    NS="$(kubectl get -f "$k8sDir/namespace.yaml" -o jsonpath='{.metadata.name}')"
-                                    kubectl -n "$NS" wait --for=condition=available --timeout=180s --all deploy
-                                    kubectl -n "$NS" get pods,svc
-                                '''
+                    script {
+                        explainAndFail(
+                            'Kubernetes',
+                            'Apply ou rollout falhou. Confira k3s-kubeconfig, o manifesto k8s/ e se o cluster puxa nexus:8082.'
+                        ) {
+                            withKubeConfig(
+                                credentialsId: 'k3s-kubeconfig',
+                                serverUrl: 'https://host.docker.internal:6443'
+                            ) {
+                                withCredentials([
+                                    usernamePassword(credentialsId: 'nexus-account', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')
+                                ]) {
+                                    dir(env.branch) {
+                                        sh '''
+                                            test -f "$k8sDir/namespace.yaml"
+                                            kubectl apply -f "$k8sDir/namespace.yaml"
+                                            NS="$(kubectl get -f "$k8sDir/namespace.yaml" -o jsonpath='{.metadata.name}')"
+                                            kubectl -n "$NS" create secret docker-registry nexus-registry \
+                                              --docker-server=nexus:8082 \
+                                              --docker-username="$NEXUS_USER" \
+                                              --docker-password="$NEXUS_PASS" \
+                                              --dry-run=client -o yaml | kubectl apply -f -
+                                        '''
+                                        sh "sed 's|PLACEHOLDER_IMAGE|${env.k8sImage}|g' '${env.k8sDir}/deployment.yaml' | kubectl apply -f -"
+                                        sh '''
+                                            kubectl apply -f "$k8sDir/service.yaml"
+                                            NS="$(kubectl get -f "$k8sDir/namespace.yaml" -o jsonpath='{.metadata.name}')"
+                                            kubectl -n "$NS" wait --for=condition=available --timeout=180s --all deploy
+                                            kubectl -n "$NS" get pods,svc
+                                        '''
+                                    }
+                                }
                             }
                         }
                     }
@@ -264,6 +327,9 @@ def call(Map config = [:]) {
                         echo 'No commit author email; skipping notification'
                         return
                     }
+                    def errorHtml = env.PIPELINE_ERROR
+                        ? "<p><b>Erro:</b> ${env.PIPELINE_ERROR}</p>"
+                        : ''
                     emailext(
                         to: toEmail,
                         from: 'contato@henrks.com',
@@ -275,6 +341,7 @@ def call(Map config = [:]) {
                             <html>
                               <body style="font-family: sans-serif; line-height: 1.4;">
                                 <h2>Build ${currentBuild.currentResult}</h2>
+                                ${errorHtml}
                                 <p><b>Repo:</b> ${env.repo_full_name}</p>
                                 <p><b>Branch:</b> ${env.branch}</p>
                                 <p><b>Autor:</b> ${env.commitAuthor ?: env.commit_author} &lt;${toEmail}&gt;</p>
@@ -290,6 +357,50 @@ def call(Map config = [:]) {
                 sh 'docker logout 127.0.0.1:5000 || true'
                 sh "docker image rm -f '${env.image}' || true"
             }
+        }
+    }
+}
+
+def explainAndFail(String title, String hint, Closure body) {
+    try {
+        body()
+    } catch (err) {
+        def detail = err.getMessage() ?: err.toString()
+        env.PIPELINE_ERROR = "${title}: ${detail}"
+        echo """
+============================================================
+FALHOU: ${title}
+${hint}
+Detalhe: ${detail}
+============================================================
+"""
+        error("${title}: ${detail}")
+    }
+}
+
+def recordFailure(String envKey, String title, String hint, Closure body) {
+    try {
+        body()
+    } catch (err) {
+        def detail = err.getMessage() ?: err.toString()
+        def msg = "${title}: ${detail}"
+        if (envKey == 'GITLEAKS_ERROR') {
+            env.GITLEAKS_ERROR = msg
+        } else if (envKey == 'SEMGREP_ERROR') {
+            env.SEMGREP_ERROR = msg
+        } else if (envKey == 'TRIVYFS_ERROR') {
+            env.TRIVYFS_ERROR = msg
+        }
+        env.PIPELINE_ERROR = [env.PIPELINE_ERROR, msg].findAll { it }.join(' | ')
+        echo """
+============================================================
+FALHOU: ${title}
+${hint}
+Detalhe: ${detail}
+============================================================
+"""
+        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+            error(msg)
         }
     }
 }
