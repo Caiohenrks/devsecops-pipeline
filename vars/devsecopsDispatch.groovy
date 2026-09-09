@@ -30,8 +30,6 @@ def call(Map config = [:]) {
                 steps {
                     script {
                         def repo = (env.repo_full_name ?: '').trim()
-                        ensureMetricsJob(config)
-
                         if (!repo) {
                             echo 'Sem payload de webhook. Trigger registrado. Um push em um serviço cria o job.'
                             currentBuild.description = 'trigger registered'
@@ -70,23 +68,9 @@ def call(Map config = [:]) {
                             string(name: 'commit_author', value: env.commit_author ?: ''),
                             string(name: 'commit_timestamp', value: env.commit_timestamp ?: '')
                         ]
-                        build job: 'metrics', wait: false
                     }
                 }
             }
         }
     }
-}
-
-def ensureMetricsJob(Map config) {
-    jenkinsEnsureJob(
-        root: true,
-        name: 'metrics',
-        displayName: 'DORA / continuidade',
-        credentialsId: config.jenkinsCredentialsId ?: 'jenkins-api',
-        scmUrl: 'git@gitea:admin/devsecops-pipeline.git',
-        scmCredentialsId: config.scmCredentialsId ?: 'gitea-ssh',
-        scmBranch: 'main',
-        scriptPath: 'Jenkinsfile.metrics'
-    )
 }

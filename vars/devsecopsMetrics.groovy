@@ -54,15 +54,16 @@ def collectAndRender(String folder, int days, double slo) {
         ).trim()
         def jobs = parseJson(jobsJson).jobs ?: []
         jobs.each { job ->
+            def jobName = job['name']
             def buildsJson = sh(
                 returnStdout: true,
                 script: """
                     curl -sf -g -u "\$JENKINS_API_USER:\$JENKINS_API_TOKEN" \
-                      '${jenkinsUrl}/job/${folder}/job/${job.name}/api/json?tree=builds[number,result,timestamp,duration,description]{0,80}'
+                      '${jenkinsUrl}/job/${folder}/job/${jobName}/api/json?tree=builds[number,result,timestamp,duration,description]{0,80}'
                 """
             ).trim()
             def builds = (parseJson(buildsJson).builds ?: []).findAll { b ->
-                (b.timestamp ?: 0L) >= cutoff && b.result in ['SUCCESS', 'FAILURE', 'UNSTABLE']
+                ((b['timestamp'] ?: 0L) as long) >= cutoff && b['result'] in ['SUCCESS', 'FAILURE', 'UNSTABLE']
             }
             services << summarize(job, builds, days, slo, jenkinsUrl)
         }
@@ -72,23 +73,24 @@ def collectAndRender(String folder, int days, double slo) {
 }
 
 def summarize(job, List builds, int days, double slo, String jenkinsUrl) {
-    def success = builds.findAll { it.result == 'SUCCESS' }
-    def failed = builds.findAll { it.result == 'FAILURE' }
+    def success = builds.findAll { it['result'] == 'SUCCESS' }
+    def failed = builds.findAll { it['result'] == 'FAILURE' }
     def done = success.size() + failed.size()
-    def leads = success.collect { leadSeconds(it.description) }.findAll { it != null }
+    def leads = success.collect { leadSeconds(it['description'] as String) }.findAll { it != null }
     def leadAvg = leads ? (leads.sum() / leads.size()) : null
     def freqWeek = days > 0 ? (success.size() / (days / 7.0d)) : 0d
     def cfr = done ? (failed.size() / (done as double)) : null
     def ttr = meanRestoreSeconds(builds)
     def failRate = done ? (failed.size() / (done as double)) : 0d
     def budget = slo < 1d ? Math.min(1d, failRate / (1d - slo)) : 0d
-    def repo = (job.displayName ?: job.name) as String
+    def jobName = (job['name'] ?: '') as String
+    def repo = (job['displayName'] ?: jobName) as String
     def runbook = hasRunbook(repo)
 
     [
-        name       : job.name,
+        name       : jobName,
         display    : repo,
-        url        : job.url ?: "${jenkinsUrl}/job/services/job/${job.name}/",
+        url        : (job['url'] ?: "${jenkinsUrl}/job/services/job/${jobName}/") as String,
         builds     : builds.size(),
         success    : success.size(),
         failed     : failed.size(),
@@ -114,15 +116,16 @@ def leadSeconds(String description) {
 
 @NonCPS
 def meanRestoreSeconds(List builds) {
-    def ordered = builds.sort { a, b -> (a.timestamp ?: 0L) <=> (b.timestamp ?: 0L) }
+    def ordered = builds.sort { a, b -> ((a['timestamp'] ?: 0L) as long) <=> ((b['timestamp'] ?: 0L) as long) }
     def waits = []
     for (int i = 0; i < ordered.size(); i++) {
-        if (ordered[i].result != 'FAILURE') {
+        if (ordered[i]['result'] != 'FAILURE') {
             continue
         }
-        def next = ordered.find { it.timestamp > ordered[i].timestamp && it.result == 'SUCCESS' }
+        def failTs = (ordered[i]['timestamp'] ?: 0L) as long
+        def next = ordered.find { ((it['timestamp'] ?: 0L) as long) > failTs && it['result'] == 'SUCCESS' }
         if (next) {
-            waits << ((next.timestamp - ordered[i].timestamp) / 1000.0d)
+            waits << ((((next['timestamp'] ?: 0L) as long) - failTs) / 1000.0d)
         }
     }
     waits ? (waits.sum() / waits.size()) : null
@@ -139,17 +142,20 @@ def hasRunbook(String repo) {
     return code == '200'
 }
 
+@NonCPS
 def renderHtml(List services, int days, double slo, String jenkinsUrl) {
     def n = services.size() ?: 1
-    def leadVals = services.collect { it.leadAvg }.findAll { it != null }
-    def ttrVals = services.collect { it.ttr }.findAll { it != null }
-    def cfrVals = services.collect { it.cfr }.findAll { it != null }
+    def leadVals = services.collect { it['leadAvg'] }.findAll { it != null }
+    def ttrVals = services.collect { it['ttr'] }.findAll { it != null }
+    def cfrVals = services.collect { it['cfr'] }.findAll { it != null }
     def lead = leadVals ? (leadVals.sum() / leadVals.size()) : null
-    def freq = services.collect { it.freqWeek }.sum() / n
+    def freqVals = services.collect { it['freqWeek'] ?: 0d }
+    def freq = freqVals ? (freqVals.sum() / n) : 0d
     def cfr = cfrVals ? (cfrVals.sum() / cfrVals.size()) : null
     def ttr = ttrVals ? (ttrVals.sum() / ttrVals.size()) : null
-    def budget = services.collect { it.budget }.sum() / n
-    def runbooks = services.count { it.runbook } / (services.size() ?: 1)
+    def budgetVals = services.collect { it['budget'] ?: 0d }
+    def budget = budgetVals ? (budgetVals.sum() / n) : 0d
+    def runbooks = services.count { it['runbook'] } / (services.size() ?: 1)
 
     def cards = [
         card('Lead time for changes', fmtDuration(lead), 'Tempo médio entre o commit (webhook) e o fim do job de sucesso. Vem do LT gravado na description.'),
@@ -160,16 +166,16 @@ def renderHtml(List services, int days, double slo, String jenkinsUrl) {
         card('Cobertura de runbooks', fmtPct(runbooks), 'Serviços com docs/runbook.md no Gitea (main).')
     ].join('\n')
 
-    def rows = services.sort { it.display }.collect { s ->
+    def rows = services.sort { a, b -> (a['display'] ?: '') <=> (b['display'] ?: '') }.collect { s ->
         """<tr>
-          <td><a href="${esc(s.url)}">${esc(s.display)}</a></td>
-          <td>${s.success}/${s.builds}</td>
-          <td>${fmtDuration(s.leadAvg)}</td>
-          <td>${String.format(Locale.US, '%.1f', s.freqWeek)}</td>
-          <td>${fmtPct(s.cfr)}</td>
-          <td>${fmtDuration(s.ttr)}</td>
-          <td>${fmtPct(s.budget)}</td>
-          <td>${s.runbook ? 'sim' : 'não'}</td>
+          <td><a href="${esc(s['url'])}">${esc(s['display'])}</a></td>
+          <td>${s['success']}/${s['builds']}</td>
+          <td>${fmtDuration(s['leadAvg'])}</td>
+          <td>${String.format(Locale.US, '%.1f', s['freqWeek'])}</td>
+          <td>${fmtPct(s['cfr'])}</td>
+          <td>${fmtDuration(s['ttr'])}</td>
+          <td>${fmtPct(s['budget'])}</td>
+          <td>${s['runbook'] ? 'sim' : 'não'}</td>
         </tr>"""
     }.join('\n')
 
@@ -232,6 +238,7 @@ def renderHtml(List services, int days, double slo, String jenkinsUrl) {
 """
 }
 
+@NonCPS
 def card(String title, String value, String hint) {
     """<article>
       <h2>${esc(title)}</h2>
@@ -240,6 +247,7 @@ def card(String title, String value, String hint) {
     </article>"""
 }
 
+@NonCPS
 def fmtDuration(Object seconds) {
     if (seconds == null) {
         return '—'
@@ -254,6 +262,7 @@ def fmtDuration(Object seconds) {
     return String.format(Locale.US, '%.1f h', s / 3600d)
 }
 
+@NonCPS
 def fmtPct(Object ratio) {
     if (ratio == null) {
         return '—'
@@ -261,6 +270,7 @@ def fmtPct(Object ratio) {
     return String.format(Locale.US, '%.0f%%', (ratio as double) * 100d)
 }
 
+@NonCPS
 def esc(Object value) {
     (value ?: '')
         .toString()
