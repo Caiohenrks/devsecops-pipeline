@@ -3,10 +3,11 @@ def call(Map config = [:]) {
         agent any
 
         environment {
-            GITLEAKS_IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.28.0'
-            SEMGREP_IMAGE  = 'semgrep/semgrep:1.128.0'
-            TRIVY_IMAGE    = 'aquasec/trivy:0.74.0'
-            COSIGN_IMAGE   = 'cgr.dev/chainguard/cosign:latest@sha256:2af5cabe038577e02b21be3b6e2622c2cd2659dcdef2bdc0fbf5f64e16965a88'
+            GITLEAKS_IMAGE   = 'ghcr.io/gitleaks/gitleaks:v8.28.0'
+            SEMGREP_IMAGE    = 'semgrep/semgrep:1.128.0'
+            TRIVY_IMAGE      = 'aquasec/trivy:0.74.0'
+            CYCLONEDX_IMAGE  = 'ghcr.io/cyclonedx/cdxgen:v11'
+            COSIGN_IMAGE     = 'cgr.dev/chainguard/cosign:latest@sha256:2af5cabe038577e02b21be3b6e2622c2cd2659dcdef2bdc0fbf5f64e16965a88'
         }
 
         stages {
@@ -133,6 +134,27 @@ def call(Map config = [:]) {
                             }
                         }
                     }
+
+                    stage('CycloneDX') {
+                        steps {
+                            script {
+                                recordFailure(
+                                    'CYCLONEDX_ERROR',
+                                    'CycloneDX',
+                                    'Não gerou o SBOM do código. Relatório: reports/sbom-cyclonedx.json.'
+                                ) {
+                                    sh """
+                                        docker run --rm --user 0 --volumes-from jenkins \
+                                          -w '${env.srcDir}' \
+                                          ${env.CYCLONEDX_IMAGE} \
+                                          --no-install-deps -r \
+                                          -o '${env.reportsDir}/sbom-cyclonedx.json' \
+                                          .
+                                    """
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -142,7 +164,8 @@ def call(Map config = [:]) {
                         def failed = [
                             env.GITLEAKS_ERROR,
                             env.SEMGREP_ERROR,
-                            env.TRIVYFS_ERROR
+                            env.TRIVYFS_ERROR,
+                            env.CYCLONEDX_ERROR
                         ].findAll { it }
                         if (failed) {
                             env.PIPELINE_ERROR = failed.join(' | ')
@@ -162,6 +185,26 @@ def call(Map config = [:]) {
                             dir(env.branch) {
                                 sh "docker build -f '${env.dockerfile}' -t '${env.image}' '${env.dockerContext}'"
                             }
+                        }
+                    }
+                }
+            }
+
+            stage('CycloneDX image') {
+                steps {
+                    script {
+                        explainAndFail(
+                            'CycloneDX image',
+                            'Não gerou o SBOM da imagem. Relatório: reports/sbom-image-cyclonedx.json.'
+                        ) {
+                            sh """
+                                docker run --rm --user 0 --volumes-from jenkins \
+                                  -v /var/run/docker.sock:/var/run/docker.sock \
+                                  ${env.CYCLONEDX_IMAGE} \
+                                  -t docker --no-install-deps \
+                                  -o '${env.reportsDir}/sbom-image-cyclonedx.json' \
+                                  '${env.image}'
+                            """
                         }
                     }
                 }
@@ -397,6 +440,8 @@ def recordFailure(String envKey, String title, String hint, Closure body) {
             env.SEMGREP_ERROR = msg
         } else if (envKey == 'TRIVYFS_ERROR') {
             env.TRIVYFS_ERROR = msg
+        } else if (envKey == 'CYCLONEDX_ERROR') {
+            env.CYCLONEDX_ERROR = msg
         }
         env.PIPELINE_ERROR = [env.PIPELINE_ERROR, msg].findAll { it }.join(' | ')
         echo """
