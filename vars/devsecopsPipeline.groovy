@@ -65,6 +65,26 @@ def call(Map config = [:]) {
                 }
             }
 
+            stage('CycloneDX') {
+                steps {
+                    script {
+                        explainAndFail(
+                            'CycloneDX',
+                            'Falha da ferramenta ao gerar o SBOM do código. Relatório: reports/sbom-cyclonedx.json.'
+                        ) {
+                            sh """
+                                docker run --rm --user 0 --volumes-from jenkins \
+                                  -w '${env.srcDir}' \
+                                  ${env.CYCLONEDX_IMAGE} \
+                                  --no-install-deps -r \
+                                  -o '${env.reportsDir}/sbom-cyclonedx.json' \
+                                  .
+                            """
+                        }
+                    }
+                }
+            }
+
             stage('Security scans') {
                 parallel {
                     stage('Gitleaks') {
@@ -114,42 +134,48 @@ def call(Map config = [:]) {
                                 recordFailure(
                                     'TRIVYFS_ERROR',
                                     'Trivy FS',
-                                    'HIGH/CRITICAL no filesystem ou erro do scanner. Relatório: reports/trivy-fs.json. CVE de dependência Java aparece no Trivy image.'
+                                    'HIGH/CRITICAL no filesystem ou erro do scanner. Relatório: reports/trivy-fs.json. Dependência Java/npm/Go entra no Trivy SBOM.'
                                 ) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
-                                          fs --offline-scan --skip-files pom.xml --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
+                                          fs --offline-scan --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
                                     """
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
-                                          fs --offline-scan --skip-files pom.xml --exit-code 1 --severity HIGH,CRITICAL .
+                                          fs --offline-scan --exit-code 1 --severity HIGH,CRITICAL .
                                     """
                                 }
                             }
                         }
                     }
 
-                    stage('CycloneDX') {
+                    stage('Trivy SBOM') {
                         steps {
                             script {
                                 recordFailure(
-                                    'CYCLONEDX_ERROR',
-                                    'CycloneDX',
-                                    'Não gerou o SBOM do código. Relatório: reports/sbom-cyclonedx.json.'
+                                    'TRIVYSBOM_ERROR',
+                                    'Trivy SBOM',
+                                    'HIGH/CRITICAL no SBOM do código ou erro do scanner. Relatório: reports/trivy-sbom.json.'
                                 ) {
                                     sh """
-                                        docker run --rm --user 0 --volumes-from jenkins \
-                                          -w '${env.srcDir}' \
-                                          ${env.CYCLONEDX_IMAGE} \
-                                          --no-install-deps -r \
-                                          -o '${env.reportsDir}/sbom-cyclonedx.json' \
-                                          .
+                                        docker run --rm --volumes-from jenkins \
+                                          -v trivy-cache:/root/.cache \
+                                          ${env.TRIVY_IMAGE} \
+                                          sbom --exit-code 0 --format json --output '${env.reportsDir}/trivy-sbom.json' \
+                                          '${env.reportsDir}/sbom-cyclonedx.json'
+                                    """
+                                    sh """
+                                        docker run --rm --volumes-from jenkins \
+                                          -v trivy-cache:/root/.cache \
+                                          ${env.TRIVY_IMAGE} \
+                                          sbom --exit-code 1 --severity HIGH,CRITICAL \
+                                          '${env.reportsDir}/sbom-cyclonedx.json'
                                     """
                                 }
                             }
@@ -165,7 +191,7 @@ def call(Map config = [:]) {
                             env.GITLEAKS_ERROR,
                             env.SEMGREP_ERROR,
                             env.TRIVYFS_ERROR,
-                            env.CYCLONEDX_ERROR
+                            env.TRIVYSBOM_ERROR
                         ].findAll { it }
                         if (failed) {
                             env.PIPELINE_ERROR = failed.join(' | ')
@@ -204,6 +230,32 @@ def call(Map config = [:]) {
                                   -t docker --no-install-deps \
                                   -o '${env.reportsDir}/sbom-image-cyclonedx.json' \
                                   '${env.image}'
+                            """
+                        }
+                    }
+                }
+            }
+
+            stage('Trivy SBOM image') {
+                steps {
+                    script {
+                        explainAndFail(
+                            'Trivy SBOM image',
+                            'HIGH/CRITICAL no SBOM da imagem (ou o scanner falhou). Relatório: reports/trivy-sbom-image.json.'
+                        ) {
+                            sh """
+                                docker run --rm --volumes-from jenkins \
+                                  -v trivy-cache:/root/.cache \
+                                  ${env.TRIVY_IMAGE} \
+                                  sbom --exit-code 0 --format json --output '${env.reportsDir}/trivy-sbom-image.json' \
+                                  '${env.reportsDir}/sbom-image-cyclonedx.json'
+                            """
+                            sh """
+                                docker run --rm --volumes-from jenkins \
+                                  -v trivy-cache:/root/.cache \
+                                  ${env.TRIVY_IMAGE} \
+                                  sbom --exit-code 1 --severity HIGH,CRITICAL \
+                                  '${env.reportsDir}/sbom-image-cyclonedx.json'
                             """
                         }
                     }
@@ -257,29 +309,56 @@ def call(Map config = [:]) {
                                 ).trim()
                                 env.imageRef = digest.replaceFirst('127.0.0.1:5000', 'nexus:8082')
                                 echo "Signing ${env.imageRef}"
-                                sh '''
-                                    docker run --rm --user 0 --volumes-from jenkins \
-                                      --network infra_devsecops-network \
-                                      -e COSIGN_PASSWORD \
-                                      "$COSIGN_IMAGE" \
-                                      sign --yes \
-                                      --allow-http-registry --allow-insecure-registry \
-                                      --registry-username "$NEXUS_USER" \
-                                      --registry-password "$NEXUS_PASS" \
-                                      --key "$COSIGN_KEY" \
-                                      "$imageRef"
-                                '''
-                                sh '''
-                                    docker run --rm --user 0 --volumes-from jenkins \
-                                      --network infra_devsecops-network \
-                                      "$COSIGN_IMAGE" \
-                                      verify \
-                                      --allow-http-registry --allow-insecure-registry \
-                                      --registry-username "$NEXUS_USER" \
-                                      --registry-password "$NEXUS_PASS" \
-                                      --key "$COSIGN_PUB" \
-                                      "$imageRef"
-                                '''
+                                withEnv([
+                                    "SBOM_PATH=${env.reportsDir}/sbom-image-cyclonedx.json",
+                                    "SBOM_ATTACHED=${env.reportsDir}/sbom-image-attached.json"
+                                ]) {
+                                    sh '''
+                                        docker run --rm --user 0 --volumes-from jenkins \
+                                          --network infra_devsecops-network \
+                                          -e COSIGN_PASSWORD \
+                                          "$COSIGN_IMAGE" \
+                                          sign --yes \
+                                          --allow-http-registry --allow-insecure-registry \
+                                          --registry-username "$NEXUS_USER" \
+                                          --registry-password "$NEXUS_PASS" \
+                                          --key "$COSIGN_KEY" \
+                                          "$imageRef"
+                                    '''
+                                    sh '''
+                                        docker run --rm --user 0 --volumes-from jenkins \
+                                          --network infra_devsecops-network \
+                                          "$COSIGN_IMAGE" \
+                                          attach sbom --yes \
+                                          --type cyclonedx \
+                                          --sbom "$SBOM_PATH" \
+                                          --allow-http-registry --allow-insecure-registry \
+                                          --registry-username "$NEXUS_USER" \
+                                          --registry-password "$NEXUS_PASS" \
+                                          "$imageRef"
+                                    '''
+                                    sh '''
+                                        docker run --rm --user 0 --volumes-from jenkins \
+                                          --network infra_devsecops-network \
+                                          "$COSIGN_IMAGE" \
+                                          verify \
+                                          --allow-http-registry --allow-insecure-registry \
+                                          --registry-username "$NEXUS_USER" \
+                                          --registry-password "$NEXUS_PASS" \
+                                          --key "$COSIGN_PUB" \
+                                          "$imageRef"
+                                    '''
+                                    sh '''
+                                        docker run --rm --user 0 --volumes-from jenkins \
+                                          --network infra_devsecops-network \
+                                          "$COSIGN_IMAGE" \
+                                          download sbom \
+                                          --allow-http-registry --allow-insecure-registry \
+                                          --registry-username "$NEXUS_USER" \
+                                          --registry-password "$NEXUS_PASS" \
+                                          "$imageRef" > "$SBOM_ATTACHED"
+                                    '''
+                                }
                             }
                         }
                     }
@@ -440,8 +519,8 @@ def recordFailure(String envKey, String title, String hint, Closure body) {
             env.SEMGREP_ERROR = msg
         } else if (envKey == 'TRIVYFS_ERROR') {
             env.TRIVYFS_ERROR = msg
-        } else if (envKey == 'CYCLONEDX_ERROR') {
-            env.CYCLONEDX_ERROR = msg
+        } else if (envKey == 'TRIVYSBOM_ERROR') {
+            env.TRIVYSBOM_ERROR = msg
         }
         env.PIPELINE_ERROR = [env.PIPELINE_ERROR, msg].findAll { it }.join(' | ')
         echo """
