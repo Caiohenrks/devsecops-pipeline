@@ -25,6 +25,9 @@ def call(Map config = [:]) {
                         env.registry = '127.0.0.1:5000/docker'
                         env.srcDir = "${env.WORKSPACE}/${env.branch}"
                         env.reportsDir = "${env.WORKSPACE}/reports"
+                        env.trivyFsCache = "/root/.cache/${env.JOB_BASE_NAME}/fs"
+                        env.trivySbomCache = "/root/.cache/${env.JOB_BASE_NAME}/sbom"
+                        env.trivyImageCache = "/root/.cache/${env.JOB_BASE_NAME}/image"
                         currentBuild.description = env.repo_full_name ?: 'unknown-repo'
                         sh "mkdir -p '${env.reportsDir}'"
                     }
@@ -154,6 +157,7 @@ def call(Map config = [:]) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
+                                          -e TRIVY_CACHE_DIR='${env.trivyFsCache}' \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
                                           fs --offline-scan --exit-code 0 --format json --output '${env.reportsDir}/trivy-fs.json' .
@@ -161,6 +165,7 @@ def call(Map config = [:]) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
+                                          -e TRIVY_CACHE_DIR='${env.trivyFsCache}' \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
                                           fs --offline-scan --exit-code 1 --severity HIGH,CRITICAL .
@@ -181,6 +186,7 @@ def call(Map config = [:]) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
+                                          -e TRIVY_CACHE_DIR='${env.trivySbomCache}' \
                                           ${env.TRIVY_IMAGE} \
                                           sbom --exit-code 0 --format json --output '${env.reportsDir}/trivy-sbom.json' \
                                           '${env.reportsDir}/sbom-cyclonedx.json'
@@ -188,6 +194,7 @@ def call(Map config = [:]) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
                                           -v trivy-cache:/root/.cache \
+                                          -e TRIVY_CACHE_DIR='${env.trivySbomCache}' \
                                           ${env.TRIVY_IMAGE} \
                                           sbom --exit-code 1 --severity HIGH,CRITICAL \
                                           '${env.reportsDir}/sbom-cyclonedx.json'
@@ -242,6 +249,7 @@ def call(Map config = [:]) {
                                 docker run --rm --volumes-from jenkins \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
                                   -v trivy-cache:/root/.cache \
+                                  -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   image --format cyclonedx --output '${env.reportsDir}/sbom-image-cyclonedx.json' \
                                   '${env.image}'
@@ -261,6 +269,7 @@ def call(Map config = [:]) {
                             sh """
                                 docker run --rm --volumes-from jenkins \
                                   -v trivy-cache:/root/.cache \
+                                  -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   sbom --exit-code 0 --format json --output '${env.reportsDir}/trivy-sbom-image.json' \
                                   '${env.reportsDir}/sbom-image-cyclonedx.json'
@@ -268,6 +277,7 @@ def call(Map config = [:]) {
                             sh """
                                 docker run --rm --volumes-from jenkins \
                                   -v trivy-cache:/root/.cache \
+                                  -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   sbom --exit-code 1 --severity HIGH,CRITICAL \
                                   '${env.reportsDir}/sbom-image-cyclonedx.json'
@@ -288,6 +298,7 @@ def call(Map config = [:]) {
                                 docker run --rm --volumes-from jenkins \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
                                   -v trivy-cache:/root/.cache \
+                                  -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   image --exit-code 0 --format json --output '${env.reportsDir}/trivy-image.json' '${env.image}'
                             """
@@ -295,6 +306,7 @@ def call(Map config = [:]) {
                                 docker run --rm \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
                                   -v trivy-cache:/root/.cache \
+                                  -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   image --exit-code 1 --severity HIGH,CRITICAL '${env.image}'
                             """

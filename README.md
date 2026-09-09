@@ -333,7 +333,7 @@ IDs no Jenkins **não mudam**. Só o conteúdo da credencial.
 
 ### Volumes e lab
 
-Compose em [`infra/`](infra/docker-compose.yml). Caches: `maven-cache`, `trivy-cache`. Estado do Jenkins: volume do container.
+Compose em [`infra/`](infra/docker-compose.yml). Caches: `maven-cache`, `trivy-cache` (um diretório por job/stage — o lock único do Trivy derruba o `CycloneDX image` se dois jobs compartilham `/root/.cache`). Estado do Jenkins: volume do container.
 
 Subir o lab:
 
