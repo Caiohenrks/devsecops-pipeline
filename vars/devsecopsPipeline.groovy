@@ -375,17 +375,6 @@ def call(Map config = [:]) {
                                           --registry-username "$NEXUS_USER" \
                                           --registry-password "$NEXUS_PASS" \
                                           --key "$COSIGN_PUB" \
-                                          "$imageRef"
-                                    '''
-                                    sh '''
-                                        docker run --rm --user 0 --volumes-from jenkins \
-                                          --network infra_devsecops-network \
-                                          "$COSIGN_IMAGE" \
-                                          download attestation \
-                                          --predicate-type cyclonedx \
-                                          --allow-http-registry --allow-insecure-registry \
-                                          --registry-username "$NEXUS_USER" \
-                                          --registry-password "$NEXUS_PASS" \
                                           "$imageRef" > "$SBOM_ATTESTATION"
                                     '''
                                 }

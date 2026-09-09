@@ -1,5 +1,124 @@
 # Pipeline DevSecOps (shared library)
 
+Jenkins shared library (`@Library('devsecops')`). Repo canônico no Gitea: `admin/devsecops-pipeline`. Espelho no GitHub: `Caiohenrks/devsecops-pipeline`.
+
+O Jenkinsfile de cada microserviço tem três linhas. Scan, SBOM, build, Cosign e deploy ficam aqui.
+
+## O que é
+
+Dois entrypoints em `vars/`:
+
+| Função | Job Jenkins | Papel |
+|---|---|---|
+| `devsecopsDispatch()` | `dispatch` | Webhook Gitea → cria/atualiza `services/<owner>-<repo>` → dispara o job do serviço (`wait: false`) |
+| `devsecopsPipeline()` | `services/<owner>-<repo>` | CI/CD do microserviço |
+
+O job do serviço é **Pipeline script from SCM** (`jenkinsEnsureJob`): clona o repo do app e executa o `Jenkinsfile` dele, que só chama a library. `admin/devsecops-pipeline` e `admin/curso` são ignorados no dispatch.
+
+```
+@Library('devsecops') _
+
+devsecopsPipeline()
+```
+
+## O que faz
+
+```
+Push Gitea → dispatch → jenkinsEnsureJob → services/<owner>-<repo>
+  → Clone → CycloneDX código → scans paralelos → Security gate
+  → Build image → SBOM imagem → Trivy imagem
+  → Push Nexus → Cosign sign + attest → Apply k8s
+```
+
+1. **Prepare / Clone** — payload do webhook no workspace. Imagem local `127.0.0.1:5000/docker/<repo>:<shortSha>`. No k3s a mesma tag vira `nexus:8082/docker/<repo>:<shortSha>`.
+2. **CycloneDX (código)** — se existe `pom.xml`: `mvn -B -DskipTests dependency:resolve` (volume `maven-cache`) e cdxgen **sem** `--no-install-deps`. Senão cdxgen com `--no-install-deps`. Relatório: `reports/sbom-cyclonedx.json`.
+3. **Scans em paralelo** — Gitleaks, Semgrep, Trivy FS (HIGH/CRITICAL), Trivy SBOM no JSON do cdxgen. Os quatro terminam. O stage **Security gate** junta as falhas e aborta.
+4. **Build** → **SBOM da imagem** (`trivy image --format cyclonedx`, não cdxgen `-t docker`) → Trivy SBOM da imagem → Trivy image HIGH/CRITICAL.
+5. **Push + Cosign** — `sign` → `attest --yes --type cyclonedx --predicate` → `verify` → `verify-attestation --type cyclonedx` (stdout → `reports/sbom-image-attestation.json`). Não use `cosign attach sbom` (deprecado, não assina) nem `download attestation --predicate-type cyclonedx` (o bundle novo não leva a annotation que o `download` filtra; o Nexus devolve “no attestations … https://cyclonedx.org/bom”).
+6. **Kubernetes** — aplica o namespace do manifesto, cria/atualiza o secret `nexus-registry`, troca `PLACEHOLDER_IMAGE` pela tag SHA e espera o rollout.
+7. **Post** — arquiva `reports/*.json`, calcula lead time, e-mail ao autor do commit, `docker logout` e remove a imagem local.
+
+Falha de stage é **FAILURE**. O `try/catch` só registra o motivo no console (e no e-mail) antes do `error()`.
+
+## Por que fazer
+
+| Etapa | Risco que cobre |
+|---|---|
+| Gitleaks | Secret commitado no git |
+| Semgrep | Falha de código (SAST) |
+| Trivy FS | CVE HIGH/CRITICAL no filesystem do repo |
+| CycloneDX + Trivy SBOM | CVE no grafo de dependências (Maven resolvido entra aqui) |
+| Trivy image + SBOM da imagem | CVE e inventário do que de fato sobe no container |
+| Cosign sign + attest | Provenance: a tag no Nexus é a que o job assinou, com SBOM atestado |
+| Secret `nexus-registry` | k3s só puxa `nexus:8082` com credencial |
+
+O que **não** está no gate:
+
+- Gerar o CycloneDX em si não falha o build por CVE. Quem barra é o Trivy (FS, SBOM, imagem).
+- Testes do app ainda não existem na library.
+- O deploy usa tag SHA, não digest.
+
+## Contrato do serviço
+
+Jenkinsfile do app:
+
+```groovy
+@Library('devsecops') _
+
+devsecopsPipeline()
+```
+
+Opcional:
+
+```groovy
+devsecopsPipeline(
+  k8sDir: 'k8s',
+  dockerfile: 'Dockerfile',
+  context: '.'
+)
+```
+
+O app precisa de:
+
+- `Dockerfile`
+- `k8s/namespace.yaml`, `k8s/deployment.yaml` (com `PLACEHOLDER_IMAGE`), `k8s/service.yaml`
+- Webhook Gitea no job `dispatch`, token `dispatch`
+
+Rede Docker: `infra_devsecops-network`. Cosign fala com o Nexus pelo hostname `nexus`.
+
+Relatórios arquivados em `reports/`:
+
+| Arquivo | Origem |
+|---|---|
+| `sbom-cyclonedx.json` | cdxgen no código |
+| `gitleaks.json` | Gitleaks |
+| `semgrep.json` | Semgrep |
+| `trivy-fs.json` | Trivy filesystem |
+| `trivy-sbom.json` | Trivy no SBOM do código |
+| `sbom-image-cyclonedx.json` | Trivy `--format cyclonedx` na imagem |
+| `trivy-sbom-image.json` | Trivy no SBOM da imagem |
+| `trivy-image.json` | Trivy na imagem |
+| `sbom-image-attestation.json` | Cosign `verify-attestation --type cyclonedx` |
+
+## Job `dispatch`
+
+Pipeline script from SCM → `git@gitea:admin/devsecops-pipeline.git` (Jenkinsfile deste repo: `devsecopsDispatch()`). **Não** aponte o SCM para `crud-user` / `piadas` / `agente`.
+
+Rode **uma vez** (Build Now) para registrar o Generic Trigger. O `jenkinsEnsureJob` cria `services/<owner>-<repo>` se não existir e reescreve o `config.xml` a cada dispatch.
+
+```groovy
+jenkinsEnsureJob(folder: 'services', name: 'admin-piadas', displayName: 'admin/piadas')
+```
+
+O job gerado chama:
+
+```groovy
+@Library('devsecops') _
+devsecopsPipeline()
+```
+
+Métricas (frequência, falha, lead time) leem o job do serviço, não o dispatcher.
+
 ## Jenkins — Global Trusted Library
 
 Manage Jenkins → System → **Global Trusted Pipeline Libraries**:
@@ -172,42 +291,66 @@ O `jenkinsEnsureJob` cria a pasta `services` e o `WorkflowJob` `services/<owner>
 
 Não é credencial da pipeline. Configure **Extended E-mail Notification** (host, porta, SSL/TLS) e **Jenkins Location → System Admin e-mail** no mesmo domínio do `From` (`contato@henrks.com`).
 
----
+## Como manter / plano de continuidade
 
-## Job `dispatch`
+### Mudar a pipeline
 
-Pipeline script from SCM → `git@gitea:admin/devsecops-pipeline.git` (Jenkinsfile deste repo: `devsecopsDispatch()`). **Não** aponte o SCM para `crud-user` / `piadas` / `agente`.
+Edite `vars/` → commit em `main` → `git push origin` (Gitea; a Trusted Library lê daqui) e `git push github`. Sem override de versão: o próximo job de serviço já puxa `main`.
 
-Rode **uma vez** (Build Now) para registrar o Generic Trigger. O `jenkinsEnsureJob` cria `services/<owner>-<repo>` se não existir.
+Se library e app mudarem no mesmo ciclo, publique a library **antes** do push do app.
 
-```groovy
-jenkinsEnsureJob(folder: 'services', name: 'admin-piadas', displayName: 'admin/piadas')
+### Novo microserviço
+
+1. Repo no Gitea com Jenkinsfile de três linhas, `Dockerfile` e `k8s/` (namespace, deployment com `PLACEHOLDER_IMAGE`, service).
+2. Webhook Gitea → job `dispatch`, token `dispatch`.
+3. Primeiro push cria `services/<owner>-<repo>`. O SCM do job é reescrito a cada dispatch.
+
+### Versões de ferramenta
+
+Pins em `environment {}` em `vars/devsecopsPipeline.groovy`:
+
+| Variável | Imagem |
+|---|---|
+| `GITLEAKS_IMAGE` | `ghcr.io/gitleaks/gitleaks:v8.28.0` |
+| `SEMGREP_IMAGE` | `semgrep/semgrep:1.128.0` |
+| `TRIVY_IMAGE` | `aquasec/trivy:0.74.0` |
+| `CYCLONEDX_IMAGE` | `ghcr.io/cdxgen/cdxgen:v12` |
+| `MAVEN_IMAGE` | `maven:3.9.9-eclipse-temurin-21` |
+| `COSIGN_IMAGE` | Chainguard `cosign:latest` **com digest** |
+
+`ghcr.io/cyclonedx/cdxgen` **não existe** — use `ghcr.io/cdxgen/cdxgen:v12`. Subir versão = editar o pin, commitar, publicar.
+
+### Rotação de credenciais
+
+| Material | Quando regerar |
+|---|---|
+| Par SSH `gitea-ssh` | Chave vazou ou Gitea perdeu a pública |
+| Token `jenkins-api` | Usuário Jenkins recriado ou token revogado |
+| Token k3s (`cicd.yaml`) | Recreate do k3s (invalida o SA) |
+| Par Cosign em `pipeline/infra/cosign/` | Chave vazou; `.key` é gitignorado |
+
+IDs no Jenkins **não mudam**. Só o conteúdo da credencial.
+
+### Volumes e lab
+
+Compose em [`infra/`](infra/docker-compose.yml). Caches: `maven-cache`, `trivy-cache`. Estado do Jenkins: volume do container.
+
+Subir o lab:
+
+```powershell
+cd pipeline/infra
+docker compose up -d --build
 ```
 
-O job gerado chama:
+### Recuperação
 
-```groovy
-@Library('devsecops') _
-devsecopsPipeline()
-```
+- k3s Node Ready: `--flannel-iface=eth0` e `--disable-network-policy` (não `--disable=network-policy`).
+- Clone no Jenkins: host key com `ssh-keyscan gitea` no container. URL interna `git@gitea:…`.
+- Clone no laptop: HTTP `http://localhost:8082/admin/<repo>.git`. SSH do Windows usa a porta `2222` — **não** ponha `Host localhost` Port 2222 no ssh config (quebra o resto do localhost).
+- Cosign: senha **nunca** `devsecops` (máscara do Jenkins quebra `--network infra_devsecops-network`).
 
-Métricas (frequência, falha, lead time) leem o job do serviço, não o dispatcher. `admin/devsecops-pipeline` e `admin/curso` são ignorados.
+### Fora de escopo da library
 
-## O que o serviço pode passar
-
-```groovy
-@Library('devsecops') _
-devsecopsPipeline()
-```
-
-Opcional:
-
-```groovy
-devsecopsPipeline(
-  k8sDir: 'k8s',
-  dockerfile: 'Dockerfile',
-  context: '.'
-)
-```
-
-Falha de stage é **FAILURE**. O `try/catch` só registra o motivo no console (e no e-mail) antes do `error()`. Os scans em paralelo terminam todos; o stage **Security gate** junta as mensagens e aborta.
+- Testes unitários / de integração do app
+- Deploy por digest (hoje é tag SHA)
+- `@Library('devsecops@outra-branch')` (override desligado de propósito)
