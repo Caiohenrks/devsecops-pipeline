@@ -117,6 +117,38 @@ O job gerado chama:
 devsecopsPipeline()
 ```
 
+O mapa fica no **Jenkinsfile do serviço** (não na library). Sem `environments`, a library usa o default do lab. Os `piadas-*` já declaram `develop` → hml e `main` → prod; no lab os dois IDs apontam para o mesmo Nexus/k3s. Numa empresa, troque só os valores:
+
+```groovy
+@Library('devsecops') _
+devsecopsPipeline(
+  environments: [
+    develop: [
+      name            : 'hml',
+      REGISTRY_PUSH   : 'registry-hml:5000',
+      REGISTRY_PULL   : 'registry-hml:5000',
+      CRED_NEXUS      : 'nexus-hml',
+      CRED_KUBECONFIG : 'k8s-hml',
+      K8S_SERVER      : 'https://hml.k8s.empresa:6443'
+    ],
+    main: [
+      name            : 'prod',
+      REGISTRY_PUSH   : 'registry-prod:5000',
+      REGISTRY_PULL   : 'registry-prod:5000',
+      CRED_NEXUS      : 'nexus-prod',
+      CRED_KUBECONFIG : 'k8s-prod',
+      K8S_SERVER      : 'https://prod.k8s.empresa:6443'
+    ]
+  ]
+)
+```
+
+| Branch | Efeito |
+|---|---|
+| No mapa (`develop`, `main`) | Push no registry do perfil e apply no cluster do `CRED_KUBECONFIG` |
+| Fora do mapa (`feature/x`) | Scan + build. Sem push, Cosign nem Kubernetes |
+| Sem `environments` | Lab: sempre Nexus + k3s |
+
 O dispatcher **não** cria nem dispara o job de métricas.
 
 ## Job `metrics` (opcional, separado)
@@ -156,7 +188,7 @@ Sem override, `@Library('devsecops@outra-branch')` não troca a pipeline.
 
 ## Credenciais Jenkins (global)
 
-Manage Jenkins → Credentials → (global). Os IDs **têm que ser exatamente estes**.
+Manage Jenkins → Credentials → (global). Os IDs padrão estão no topo de `vars/devsecopsPipeline.groovy` (`CRED_*`). Senha e chave **não** vão no Git — só o ID. HML e prod: crie um kubeconfig e um `Username/password` de registry por cluster e aponte-os no `environments` do Jenkinsfile do serviço.
 
 Em cada credencial: gere o material → escolha o **Kind** certo → cole no Jenkins com o ID da seção.
 
@@ -352,7 +384,7 @@ IDs no Jenkins **não mudam**. Só o conteúdo da credencial.
 
 ### Volumes e lab
 
-Compose em [`infra/`](infra/docker-compose.yml). Caches: `maven-cache`, `trivy-cache` (um diretório por job/stage — o lock único do Trivy derruba o `CycloneDX image` se dois jobs compartilham `/root/.cache`). Estado do Jenkins: volume do container.
+Compose em [`infra/`](infra/docker-compose.yml). Caches: `maven-cache` (`/root/.m2` no container Maven), `trivy-cache` montado em `/var/tmp/trivy` (um diretório por job/stage — o lock único do Trivy derruba o `CycloneDX image` se dois jobs compartilham o mesmo cache). Estado do Jenkins: volume do container.
 
 Subir o lab:
 

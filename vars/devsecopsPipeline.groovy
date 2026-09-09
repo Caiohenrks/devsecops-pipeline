@@ -3,6 +3,27 @@ def call(Map config = [:]) {
         agent any
 
         environment {
+            // --- URLs / hosts (lab). Troque aqui ou passe no call: devsecopsPipeline(REGISTRY_PUSH: '...') ---
+            GIT_PUBLIC_HTTP   = 'http://localhost:8082'
+            GIT_INTERNAL_HTTP = 'http://gitea:3000'
+            GIT_INTERNAL_HOST = 'gitea'
+            REGISTRY_PUSH     = '127.0.0.1:5000'
+            REGISTRY_PULL     = 'nexus:8082'
+            REGISTRY_REPO     = 'docker'
+            K8S_SERVER        = 'https://host.docker.internal:6443'
+            DOCKER_NETWORK    = 'infra_devsecops-network'
+            MAIL_FROM         = 'contato@henrks.com'
+            TRIVY_CACHE_ROOT  = '/var/tmp/trivy'
+
+            // --- IDs das credenciais no Jenkins. A senha/chave fica no Jenkins, nunca neste arquivo ---
+            CRED_GIT_SSH          = 'gitea-ssh'
+            CRED_NEXUS            = 'nexus-account'
+            CRED_COSIGN_KEY       = 'cosign-key'
+            CRED_COSIGN_PUB       = 'cosign-pub'
+            CRED_COSIGN_PASSWORD  = 'cosign-password'
+            CRED_KUBECONFIG       = 'k3s-kubeconfig'
+
+            // --- Imagens das ferramentas ---
             GITLEAKS_IMAGE   = 'ghcr.io/gitleaks/gitleaks:v8.28.0'
             SEMGREP_IMAGE    = 'semgrep/semgrep:1.128.0'
             TRIVY_IMAGE      = 'aquasec/trivy:0.74.0'
@@ -16,18 +37,19 @@ def call(Map config = [:]) {
                 steps {
                     script {
                         bindWebhookParams()
+                        resolveEnvironment(config)
                         cleanWs()
                         env.k8sDir = (config.k8sDir ?: 'k8s') as String
                         env.dockerContext = (config.context ?: '.') as String
                         env.dockerfile = (config.dockerfile ?: 'Dockerfile') as String
-                        env.sshUrl = (env.ssh_url ?: '').replace('localhost', 'gitea')
-                        env.htmlUrl = (env.html_url ?: '').replace('http://localhost:8082', 'http://gitea:3000')
-                        env.registry = '127.0.0.1:5000/docker'
+                        env.sshUrl = (env.ssh_url ?: '').replace('localhost', env.GIT_INTERNAL_HOST)
+                        env.htmlUrl = (env.html_url ?: '').replace(env.GIT_PUBLIC_HTTP, env.GIT_INTERNAL_HTTP)
+                        env.registry = "${env.REGISTRY_PUSH}/${env.REGISTRY_REPO}"
                         env.srcDir = "${env.WORKSPACE}/${env.branch}"
                         env.reportsDir = "${env.WORKSPACE}/reports"
-                        env.trivyFsCache = "/root/.cache/${env.JOB_BASE_NAME}/fs"
-                        env.trivySbomCache = "/root/.cache/${env.JOB_BASE_NAME}/sbom"
-                        env.trivyImageCache = "/root/.cache/${env.JOB_BASE_NAME}/image"
+                        env.trivyFsCache = "${env.TRIVY_CACHE_ROOT}/${env.JOB_BASE_NAME}/fs"
+                        env.trivySbomCache = "${env.TRIVY_CACHE_ROOT}/${env.JOB_BASE_NAME}/sbom"
+                        env.trivyImageCache = "${env.TRIVY_CACHE_ROOT}/${env.JOB_BASE_NAME}/image"
                         currentBuild.description = env.repo_full_name ?: 'unknown-repo'
                         sh "mkdir -p '${env.reportsDir}'"
                     }
@@ -39,7 +61,7 @@ def call(Map config = [:]) {
                     script {
                         explainAndFail(
                             'Clone',
-                            'Não foi possível clonar o repo no Gitea. Confira gitea-ssh, o SHA (after) e se o host gitea resolve na rede Docker.'
+                            "Não foi possível clonar o repo. Confira ${env.CRED_GIT_SSH}, o SHA (after) e se ${env.GIT_INTERNAL_HOST} resolve na rede Docker."
                         ) {
                             def gitRef = (env.after ?: '').trim() ? env.after : "*/${env.branch}"
                             checkout([
@@ -49,7 +71,7 @@ def call(Map config = [:]) {
                                     [$class: 'RelativeTargetDirectory', relativeTargetDir: env.branch]
                                 ],
                                 userRemoteConfigs: [[
-                                    credentialsId: 'gitea-ssh',
+                                    credentialsId: env.CRED_GIT_SSH,
                                     url: env.sshUrl
                                 ]]
                             ])
@@ -58,12 +80,19 @@ def call(Map config = [:]) {
                             env.commitAuthor = env.commit_author ?: sh(returnStdout: true, script: "git -C '${env.srcDir}' log -1 --pretty=%an").trim()
                             env.shortSha = env.commit.substring(0, 12)
                             env.image = "${env.registry}/${env.repo_full_name}:${env.shortSha}"
-                            env.k8sImage = "nexus:8082/docker/${env.repo_full_name}:${env.shortSha}"
+                            env.k8sImage = "${env.REGISTRY_PULL}/${env.REGISTRY_REPO}/${env.repo_full_name}:${env.shortSha}"
                             echo "Commit ${env.commit}"
                             echo "Image ${env.image}"
                             echo "K8s image ${env.k8sImage}"
                             echo "Notify ${env.commitAuthor} <${env.commitEmail}>"
-                            currentBuild.description = "${env.repo_full_name} @ ${env.shortSha}"
+                            def desc = "${env.repo_full_name} @ ${env.shortSha}"
+                            if (env.DEPLOY_ENV) {
+                                desc = "${desc} · ${env.DEPLOY_ENV}"
+                            }
+                            if (env.DEPLOY != 'true') {
+                                desc = "${desc} · CI only"
+                            }
+                            currentBuild.description = desc
                         }
                     }
                 }
@@ -156,7 +185,7 @@ def call(Map config = [:]) {
                                 ) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
-                                          -v trivy-cache:/root/.cache \
+                                          -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                           -e TRIVY_CACHE_DIR='${env.trivyFsCache}' \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
@@ -164,7 +193,7 @@ def call(Map config = [:]) {
                                     """
                                     sh """
                                         docker run --rm --volumes-from jenkins \
-                                          -v trivy-cache:/root/.cache \
+                                          -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                           -e TRIVY_CACHE_DIR='${env.trivyFsCache}' \
                                           -w '${env.srcDir}' \
                                           ${env.TRIVY_IMAGE} \
@@ -185,7 +214,7 @@ def call(Map config = [:]) {
                                 ) {
                                     sh """
                                         docker run --rm --volumes-from jenkins \
-                                          -v trivy-cache:/root/.cache \
+                                          -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                           -e TRIVY_CACHE_DIR='${env.trivySbomCache}' \
                                           ${env.TRIVY_IMAGE} \
                                           sbom --exit-code 0 --format json --output '${env.reportsDir}/trivy-sbom.json' \
@@ -193,7 +222,7 @@ def call(Map config = [:]) {
                                     """
                                     sh """
                                         docker run --rm --volumes-from jenkins \
-                                          -v trivy-cache:/root/.cache \
+                                          -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                           -e TRIVY_CACHE_DIR='${env.trivySbomCache}' \
                                           ${env.TRIVY_IMAGE} \
                                           sbom --exit-code 1 --severity HIGH,CRITICAL \
@@ -248,7 +277,7 @@ def call(Map config = [:]) {
                             sh """
                                 docker run --rm --volumes-from jenkins \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
-                                  -v trivy-cache:/root/.cache \
+                                  -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                   -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   image --format cyclonedx --output '${env.reportsDir}/sbom-image-cyclonedx.json' \
@@ -268,7 +297,7 @@ def call(Map config = [:]) {
                         ) {
                             sh """
                                 docker run --rm --volumes-from jenkins \
-                                  -v trivy-cache:/root/.cache \
+                                  -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                   -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   sbom --exit-code 0 --format json --output '${env.reportsDir}/trivy-sbom-image.json' \
@@ -276,7 +305,7 @@ def call(Map config = [:]) {
                             """
                             sh """
                                 docker run --rm --volumes-from jenkins \
-                                  -v trivy-cache:/root/.cache \
+                                  -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                   -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   sbom --exit-code 1 --severity HIGH,CRITICAL \
@@ -297,7 +326,7 @@ def call(Map config = [:]) {
                             sh """
                                 docker run --rm --volumes-from jenkins \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
-                                  -v trivy-cache:/root/.cache \
+                                  -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                   -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   image --exit-code 0 --format json --output '${env.reportsDir}/trivy-image.json' '${env.image}'
@@ -305,7 +334,7 @@ def call(Map config = [:]) {
                             sh """
                                 docker run --rm \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
-                                  -v trivy-cache:/root/.cache \
+                                  -v trivy-cache:${env.TRIVY_CACHE_ROOT} \
                                   -e TRIVY_CACHE_DIR='${env.trivyImageCache}' \
                                   ${env.TRIVY_IMAGE} \
                                   image --exit-code 1 --severity HIGH,CRITICAL '${env.image}'
@@ -316,25 +345,26 @@ def call(Map config = [:]) {
             }
 
             stage('Push image') {
+                when { expression { return env.DEPLOY == 'true' } }
                 steps {
                     script {
                         explainAndFail(
                             'Push / Cosign',
-                            'Login/push no Nexus ou assinatura Cosign falhou. Confira nexus-account, cosign-key e a rede infra_devsecops-network.'
+                            "Login/push no registry ou Cosign falhou. Confira ${env.CRED_NEXUS}, ${env.CRED_COSIGN_KEY} e a rede ${env.DOCKER_NETWORK}."
                         ) {
                             withCredentials([
-                                usernamePassword(credentialsId: 'nexus-account', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
-                                file(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
-                                file(credentialsId: 'cosign-pub', variable: 'COSIGN_PUB'),
-                                string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')
+                                usernamePassword(credentialsId: env.CRED_NEXUS, usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
+                                file(credentialsId: env.CRED_COSIGN_KEY, variable: 'COSIGN_KEY'),
+                                file(credentialsId: env.CRED_COSIGN_PUB, variable: 'COSIGN_PUB'),
+                                string(credentialsId: env.CRED_COSIGN_PASSWORD, variable: 'COSIGN_PASSWORD')
                             ]) {
-                                sh 'echo "$NEXUS_PASS" | docker login 127.0.0.1:5000 -u "$NEXUS_USER" --password-stdin'
+                                sh 'echo "$NEXUS_PASS" | docker login "$REGISTRY_PUSH" -u "$NEXUS_USER" --password-stdin'
                                 sh "docker push '${env.image}'"
                                 def digest = sh(
                                     returnStdout: true,
                                     script: "docker inspect --format='{{index .RepoDigests 0}}' '${env.image}'"
                                 ).trim()
-                                env.imageRef = digest.replaceFirst('127.0.0.1:5000', 'nexus:8082')
+                                env.imageRef = digest.replace(env.REGISTRY_PUSH, env.REGISTRY_PULL)
                                 echo "Signing ${env.imageRef}"
                                 withEnv([
                                     "SBOM_PATH=${env.reportsDir}/sbom-image-cyclonedx.json",
@@ -342,7 +372,7 @@ def call(Map config = [:]) {
                                 ]) {
                                     sh '''
                                         docker run --rm --user 0 --volumes-from jenkins \
-                                          --network infra_devsecops-network \
+                                          --network "$DOCKER_NETWORK" \
                                           -e COSIGN_PASSWORD \
                                           "$COSIGN_IMAGE" \
                                           sign --yes \
@@ -354,7 +384,7 @@ def call(Map config = [:]) {
                                     '''
                                     sh '''
                                         docker run --rm --user 0 --volumes-from jenkins \
-                                          --network infra_devsecops-network \
+                                          --network "$DOCKER_NETWORK" \
                                           -e COSIGN_PASSWORD \
                                           "$COSIGN_IMAGE" \
                                           attest --yes \
@@ -368,7 +398,7 @@ def call(Map config = [:]) {
                                     '''
                                     sh '''
                                         docker run --rm --user 0 --volumes-from jenkins \
-                                          --network infra_devsecops-network \
+                                          --network "$DOCKER_NETWORK" \
                                           "$COSIGN_IMAGE" \
                                           verify \
                                           --allow-http-registry --allow-insecure-registry \
@@ -379,7 +409,7 @@ def call(Map config = [:]) {
                                     '''
                                     sh '''
                                         docker run --rm --user 0 --volumes-from jenkins \
-                                          --network infra_devsecops-network \
+                                          --network "$DOCKER_NETWORK" \
                                           "$COSIGN_IMAGE" \
                                           verify-attestation \
                                           --type cyclonedx \
@@ -397,18 +427,20 @@ def call(Map config = [:]) {
             }
 
             stage('Kubernetes') {
+                when { expression { return env.DEPLOY == 'true' } }
                 steps {
                     script {
                         explainAndFail(
                             'Kubernetes',
-                            'Apply ou rollout falhou. Confira k3s-kubeconfig, o manifesto k8s/ e se o cluster puxa nexus:8082.'
+                            "Apply ou rollout falhou. Confira ${env.CRED_KUBECONFIG}, o manifesto k8s/ e se o cluster puxa ${env.REGISTRY_PULL}."
                         ) {
-                            withKubeConfig(
-                                credentialsId: 'k3s-kubeconfig',
-                                serverUrl: 'https://host.docker.internal:6443'
-                            ) {
+                            def kubeArgs = [credentialsId: env.CRED_KUBECONFIG]
+                            if (env.K8S_SERVER?.trim()) {
+                                kubeArgs.serverUrl = env.K8S_SERVER
+                            }
+                            withKubeConfig(kubeArgs) {
                                 withCredentials([
-                                    usernamePassword(credentialsId: 'nexus-account', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')
+                                    usernamePassword(credentialsId: env.CRED_NEXUS, usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')
                                 ]) {
                                     dir(env.branch) {
                                         sh '''
@@ -416,7 +448,7 @@ def call(Map config = [:]) {
                                             kubectl apply -f "$k8sDir/namespace.yaml"
                                             NS="$(kubectl get -f "$k8sDir/namespace.yaml" -o jsonpath='{.metadata.name}')"
                                             kubectl -n "$NS" create secret docker-registry nexus-registry \
-                                              --docker-server=nexus:8082 \
+                                              --docker-server="$REGISTRY_PULL" \
                                               --docker-username="$NEXUS_USER" \
                                               --docker-password="$NEXUS_PASS" \
                                               --dry-run=client -o yaml | kubectl apply -f -
@@ -457,8 +489,8 @@ def call(Map config = [:]) {
                         : ''
                     emailext(
                         to: toEmail,
-                        from: 'contato@henrks.com',
-                        replyTo: 'contato@henrks.com',
+                        from: env.MAIL_FROM,
+                        replyTo: env.MAIL_FROM,
                         mimeType: 'text/html',
                         attachLog: true,
                         subject: "[Jenkins] ${env.repo_full_name ?: env.JOB_NAME} #${env.BUILD_NUMBER} — ${currentBuild.currentResult}",
@@ -480,9 +512,49 @@ def call(Map config = [:]) {
                         """
                     )
                 }
-                sh 'docker logout 127.0.0.1:5000 || true'
+                sh 'docker logout "$REGISTRY_PUSH" || true'
                 sh "docker image rm -f '${env.image}' || true"
             }
+        }
+    }
+}
+
+def resolveEnvironment(Map config) {
+    applySettings(config)
+    def envs = config.environments
+    if (!envs) {
+        env.DEPLOY = 'true'
+        env.DEPLOY_ENV = 'lab'
+        return
+    }
+    def branch = (env.branch ?: '').trim()
+    def profile = envs[branch]
+    if (profile == null) {
+        def match = envs.find { key, value -> key.toString() == branch }
+        profile = match ? match.value : null
+    }
+    if (!profile) {
+        env.DEPLOY = 'false'
+        env.DEPLOY_ENV = ''
+        echo "Branch ${branch} sem ambiente — CI apenas"
+        return
+    }
+    applySettings(profile as Map)
+    env.DEPLOY = 'true'
+    env.DEPLOY_ENV = ((profile['name'] ?: branch) as String)
+    echo "Ambiente ${env.DEPLOY_ENV} (branch ${branch})"
+}
+
+def applySettings(Map config) {
+    [
+        'GIT_PUBLIC_HTTP', 'GIT_INTERNAL_HTTP', 'GIT_INTERNAL_HOST',
+        'REGISTRY_PUSH', 'REGISTRY_PULL', 'REGISTRY_REPO',
+        'K8S_SERVER', 'DOCKER_NETWORK', 'MAIL_FROM', 'TRIVY_CACHE_ROOT',
+        'CRED_GIT_SSH', 'CRED_NEXUS', 'CRED_COSIGN_KEY', 'CRED_COSIGN_PUB',
+        'CRED_COSIGN_PASSWORD', 'CRED_KUBECONFIG'
+    ].each { key ->
+        if (config.containsKey(key) && config[key] != null) {
+            env[key] = config[key].toString()
         }
     }
 }
