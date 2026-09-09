@@ -7,6 +7,7 @@ def call(Map config = [:]) {
             SEMGREP_IMAGE    = 'semgrep/semgrep:1.128.0'
             TRIVY_IMAGE      = 'aquasec/trivy:0.74.0'
             CYCLONEDX_IMAGE  = 'ghcr.io/cdxgen/cdxgen:v12'
+            MAVEN_IMAGE      = 'maven:3.9.9-eclipse-temurin-21'
             COSIGN_IMAGE     = 'cgr.dev/chainguard/cosign:latest@sha256:2af5cabe038577e02b21be3b6e2622c2cd2659dcdef2bdc0fbf5f64e16965a88'
         }
 
@@ -73,12 +74,26 @@ def call(Map config = [:]) {
                             'Falha da ferramenta ao gerar o SBOM do código. Relatório: reports/sbom-cyclonedx.json.'
                         ) {
                             sh """
-                                docker run --rm --user 0 --volumes-from jenkins \
-                                  -w '${env.srcDir}' \
-                                  ${env.CYCLONEDX_IMAGE} \
-                                  --no-install-deps -r \
-                                  -o '${env.reportsDir}/sbom-cyclonedx.json' \
-                                  .
+                                if [ -f '${env.srcDir}/pom.xml' ]; then
+                                  docker run --rm --user 0 --volumes-from jenkins \
+                                    -v maven-cache:/root/.m2 \
+                                    -w '${env.srcDir}' \
+                                    ${env.MAVEN_IMAGE} \
+                                    mvn -B -DskipTests dependency:resolve
+                                  docker run --rm --user 0 --volumes-from jenkins \
+                                    -v maven-cache:/root/.m2 \
+                                    -w '${env.srcDir}' \
+                                    ${env.CYCLONEDX_IMAGE} \
+                                    -r -o '${env.reportsDir}/sbom-cyclonedx.json' \
+                                    .
+                                else
+                                  docker run --rm --user 0 --volumes-from jenkins \
+                                    -w '${env.srcDir}' \
+                                    ${env.CYCLONEDX_IMAGE} \
+                                    --no-install-deps -r \
+                                    -o '${env.reportsDir}/sbom-cyclonedx.json' \
+                                    .
+                                fi
                             """
                         }
                     }
@@ -221,14 +236,14 @@ def call(Map config = [:]) {
                     script {
                         explainAndFail(
                             'CycloneDX image',
-                            'Não gerou o SBOM da imagem. Relatório: reports/sbom-image-cyclonedx.json.'
+                            'Não gerou o SBOM da imagem (Trivy --format cyclonedx). Relatório: reports/sbom-image-cyclonedx.json.'
                         ) {
                             sh """
-                                docker run --rm --user 0 --volumes-from jenkins \
+                                docker run --rm --volumes-from jenkins \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
-                                  ${env.CYCLONEDX_IMAGE} \
-                                  -t docker --no-install-deps \
-                                  -o '${env.reportsDir}/sbom-image-cyclonedx.json' \
+                                  -v trivy-cache:/root/.cache \
+                                  ${env.TRIVY_IMAGE} \
+                                  image --format cyclonedx --output '${env.reportsDir}/sbom-image-cyclonedx.json' \
                                   '${env.image}'
                             """
                         }
@@ -311,7 +326,7 @@ def call(Map config = [:]) {
                                 echo "Signing ${env.imageRef}"
                                 withEnv([
                                     "SBOM_PATH=${env.reportsDir}/sbom-image-cyclonedx.json",
-                                    "SBOM_ATTACHED=${env.reportsDir}/sbom-image-attached.json"
+                                    "SBOM_ATTESTATION=${env.reportsDir}/sbom-image-attestation.json"
                                 ]) {
                                     sh '''
                                         docker run --rm --user 0 --volumes-from jenkins \
@@ -328,13 +343,15 @@ def call(Map config = [:]) {
                                     sh '''
                                         docker run --rm --user 0 --volumes-from jenkins \
                                           --network infra_devsecops-network \
+                                          -e COSIGN_PASSWORD \
                                           "$COSIGN_IMAGE" \
-                                          attach sbom \
+                                          attest --yes \
                                           --type cyclonedx \
-                                          --sbom "$SBOM_PATH" \
+                                          --predicate "$SBOM_PATH" \
                                           --allow-http-registry --allow-insecure-registry \
                                           --registry-username "$NEXUS_USER" \
                                           --registry-password "$NEXUS_PASS" \
+                                          --key "$COSIGN_KEY" \
                                           "$imageRef"
                                     '''
                                     sh '''
@@ -352,11 +369,24 @@ def call(Map config = [:]) {
                                         docker run --rm --user 0 --volumes-from jenkins \
                                           --network infra_devsecops-network \
                                           "$COSIGN_IMAGE" \
-                                          download sbom \
+                                          verify-attestation \
+                                          --type cyclonedx \
                                           --allow-http-registry --allow-insecure-registry \
                                           --registry-username "$NEXUS_USER" \
                                           --registry-password "$NEXUS_PASS" \
-                                          "$imageRef" > "$SBOM_ATTACHED"
+                                          --key "$COSIGN_PUB" \
+                                          "$imageRef"
+                                    '''
+                                    sh '''
+                                        docker run --rm --user 0 --volumes-from jenkins \
+                                          --network infra_devsecops-network \
+                                          "$COSIGN_IMAGE" \
+                                          download attestation \
+                                          --predicate-type cyclonedx \
+                                          --allow-http-registry --allow-insecure-registry \
+                                          --registry-username "$NEXUS_USER" \
+                                          --registry-password "$NEXUS_PASS" \
+                                          "$imageRef" > "$SBOM_ATTESTATION"
                                     '''
                                 }
                             }
