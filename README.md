@@ -147,7 +147,7 @@ devsecopsPipeline(
 |---|---|
 | No mapa (`develop`, `main`) | Push no registry do perfil e apply no cluster do `CRED_KUBECONFIG` |
 | Fora do mapa (`feature/x`) | Scan + build. Sem push, Cosign nem Kubernetes |
-| Sem `environments` | Lab: sempre Nexus + k3s |
+| Sem `environments` | Default do topo da pipeline (Nexus + k3s), nome `prod` |
 
 O dispatcher **não** cria nem dispara o job de métricas.
 

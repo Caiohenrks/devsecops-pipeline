@@ -4,8 +4,6 @@ def call(Map config = [:]) {
 
         environment {
             // --- URLs / hosts (lab). Troque aqui ou passe no call: devsecopsPipeline(REGISTRY_PUSH: '...') ---
-            GIT_PUBLIC_HTTP   = 'http://localhost:8082'
-            GIT_INTERNAL_HTTP = 'http://gitea:3000'
             GIT_INTERNAL_HOST = 'gitea'
             REGISTRY_PUSH     = '127.0.0.1:5000'
             REGISTRY_PULL     = 'nexus:8082'
@@ -43,7 +41,6 @@ def call(Map config = [:]) {
                         env.dockerContext = (config.context ?: '.') as String
                         env.dockerfile = (config.dockerfile ?: 'Dockerfile') as String
                         env.sshUrl = (env.ssh_url ?: '').replace('localhost', env.GIT_INTERNAL_HOST)
-                        env.htmlUrl = (env.html_url ?: '').replace(env.GIT_PUBLIC_HTTP, env.GIT_INTERNAL_HTTP)
                         env.registry = "${env.REGISTRY_PUSH}/${env.REGISTRY_REPO}"
                         env.srcDir = "${env.WORKSPACE}/${env.branch}"
                         env.reportsDir = "${env.WORKSPACE}/reports"
@@ -524,7 +521,7 @@ def resolveEnvironment(Map config) {
     def envs = config.environments
     if (!envs) {
         env.DEPLOY = 'true'
-        env.DEPLOY_ENV = 'lab'
+        env.DEPLOY_ENV = 'prod'
         return
     }
     def branch = (env.branch ?: '').trim()
@@ -547,7 +544,7 @@ def resolveEnvironment(Map config) {
 
 def applySettings(Map config) {
     [
-        'GIT_PUBLIC_HTTP', 'GIT_INTERNAL_HTTP', 'GIT_INTERNAL_HOST',
+        'GIT_INTERNAL_HOST',
         'REGISTRY_PUSH', 'REGISTRY_PULL', 'REGISTRY_REPO',
         'K8S_SERVER', 'DOCKER_NETWORK', 'MAIL_FROM', 'TRIVY_CACHE_ROOT',
         'CRED_GIT_SSH', 'CRED_NEXUS', 'CRED_COSIGN_KEY', 'CRED_COSIGN_PUB',
