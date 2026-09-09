@@ -149,22 +149,27 @@ devsecopsPipeline(
 | Fora do mapa (`feature/x`) | Scan + build. Sem push, Cosign nem Kubernetes |
 | Sem `environments` | Default do topo da pipeline (Nexus + k3s), nome `prod` |
 
-O dispatcher **não** cria nem dispara o job de métricas.
+O dispatcher **não** cria nem dispara métricas.
 
-## Job `metrics` (opcional, separado)
+## DORA (`jenkins-dora-metric`)
 
-Não faz parte do webhook nem da pipeline do serviço. Plugável: existe se você criar o job; apagar/desabilitar não altera `dispatch` nem `services/*`.
+Não é job Jenkins. É o container [`jenkins-dora-metric/`](../jenkins-dora-metric/) no compose (porta **8090**). Só **lê** a API (`JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN`) e o `LT Ns` que o serviço já grava na description.
 
-New Item `metrics` → Pipeline script from SCM → este repo → script `Jenkinsfile.metrics` (`devsecopsMetrics()`). Cron ~30 min e token `dora`.
+Página: [http://localhost:8090/](http://localhost:8090/) (compose) ou [http://localhost:30088/](http://localhost:30088/) (k3s, job `services/admin-jenkins-dora-metric`). Janelas 24h, 7d, 30d, 1 ano.
 
-Página: [http://localhost:8080/userContent/dora/](http://localhost:8080/userContent/dora/)
+No `pipeline/infra/.env` (não vai para o Git):
 
-Só **lê** o histórico dos jobs em `services/` (Jenkins API) e o `LT Ns` que o serviço já grava na description.
+```
+JENKINS_USER=admin
+JENKINS_TOKEN=seu-token
+```
+
+Se o job `metrics` ainda existir no Jenkins, desabilite ou apague. Token `dora` e `/userContent/dora/` não são mais usados.
 
 | Métrica | Como o lab calcula |
 |---|---|
 | Lead time for changes | Média do `LT Ns` na description dos SUCCESS (commit do webhook → fim do job) |
-| Deployment frequency | SUCCESS / semana na janela (30 dias) |
+| Deployment frequency | SUCCESS / semana na janela escolhida |
 | Change failure rate | FAILURE / (SUCCESS + FAILURE) |
 | Time to restore | Média FAILURE → próximo SUCCESS do mesmo job |
 | Error budget consumption | Taxa de falha ÷ (1 − SLO 99%) |
@@ -390,8 +395,11 @@ Subir o lab:
 
 ```powershell
 cd pipeline/infra
+copy .env.example .env   # preencha JENKINS_TOKEN
 docker compose up -d --build
 ```
+
+DORA no lab: [http://localhost:8090/](http://localhost:8090/). Sem token o container sobe, mas a página responde 503.
 
 ### Recuperação
 

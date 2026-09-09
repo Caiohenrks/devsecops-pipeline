@@ -1,3 +1,4 @@
+.env
 k3s.yml
 k3s-deploy.yml
 cicd.yaml

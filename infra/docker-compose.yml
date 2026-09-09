@@ -23,6 +23,34 @@ services:
       retries: 3
       start_period: 40s
 
+  jenkins-dora-metric:
+    build:
+      context: ../../jenkins-dora-metric
+      dockerfile: Dockerfile
+    image: jenkins-dora-metric:local
+    container_name: jenkins-dora-metric
+    ports:
+      - 8090:8080
+    environment:
+      - JENKINS_URL=http://jenkins:8080
+      - JENKINS_PUBLIC_URL=http://localhost:8080
+      - JENKINS_USER=${JENKINS_USER:-admin}
+      - JENKINS_TOKEN=${JENKINS_TOKEN}
+      - JENKINS_FOLDER=services
+      - SLO=0.99
+      - GITEA_URL=http://gitea:3000
+    networks:
+      - devsecops-network
+    depends_on:
+      jenkins:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   nexus:
     image: sonatype/nexus3:latest
     container_name: nexus
@@ -85,6 +113,7 @@ services:
       - 30085:30085
       - 30086:30086
       - 30087:30087
+      - 30088:30088
     volumes:
       - k3s-server-data:/var/lib/rancher/k3s
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
