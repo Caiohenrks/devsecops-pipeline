@@ -4,9 +4,16 @@ def call(Map config = [:]) {
     def displayName = (config.displayName ?: name) as String
     def credentialsId = (config.credentialsId ?: 'jenkins-api') as String
     def jenkinsUrl = ((config.jenkinsUrl ?: env.JENKINS_URL ?: 'http://127.0.0.1:8080') as String).replaceAll('/+$', '')
+    def scmUrl = giteaSshUrl(config.scmUrl ?: env.ssh_url ?: '')
+    def scmCredentialsId = (config.scmCredentialsId ?: 'gitea-ssh') as String
+    def scmBranch = (config.scmBranch ?: env.branch ?: 'main') as String
+    def scriptPath = (config.scriptPath ?: 'Jenkinsfile') as String
 
     if (!name?.trim()) {
         error('jenkinsEnsureJob: name é obrigatório')
+    }
+    if (!scmUrl?.trim()) {
+        error('jenkinsEnsureJob: scmUrl é obrigatório (SSH do Gitea)')
     }
 
     writeFile file: 'folder.xml', text: '''\
@@ -19,7 +26,7 @@ def call(Map config = [:]) {
     writeFile file: 'job.xml', text: """\
 <?xml version='1.1' encoding='UTF-8'?>
 <flow-definition>
-  <displayName>${displayName}</displayName>
+  <displayName>${xmlEscape(displayName)}</displayName>
   <keepDependencies>false</keepDependencies>
   <properties>
     <hudson.model.ParametersDefinitionProperty>
@@ -36,12 +43,26 @@ def call(Map config = [:]) {
       </parameterDefinitions>
     </hudson.model.ParametersDefinitionProperty>
   </properties>
-  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition">
-    <script>@Library('devsecops') _
-
-devsecopsPipeline()
-</script>
-    <sandbox>true</sandbox>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition">
+    <scm class="hudson.plugins.git.GitSCM">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>${xmlEscape(scmUrl)}</url>
+          <credentialsId>${xmlEscape(scmCredentialsId)}</credentialsId>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/${xmlEscape(scmBranch)}</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+      <submoduleCfg class="empty-list"/>
+      <extensions/>
+    </scm>
+    <scriptPath>${xmlEscape(scriptPath)}</scriptPath>
+    <lightweight>true</lightweight>
   </definition>
   <disabled>false</disabled>
 </flow-definition>
@@ -96,7 +117,28 @@ devsecopsPipeline()
         }
     }
 
+    echo "Job ${folder}/${name} → SCM ${scmUrl} (${scriptPath} @ */${scmBranch})"
     return "${folder}/${name}"
+}
+
+def giteaSshUrl(String raw) {
+    def url = (raw ?: '').trim()
+    if (!url) {
+        return ''
+    }
+    def ssh = (url =~ /^ssh:\/\/git@[^\/:]+(?::\d+)?\/(.+)$/)
+    if (ssh.matches()) {
+        return "git@gitea:${ssh[0][1]}"
+    }
+    return url.replaceFirst(/git@[^:]+:/, 'git@gitea:')
+}
+
+def xmlEscape(String value) {
+    (value ?: '')
+        .replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+        .replace('"', '&quot;')
 }
 
 def stringParamXml(String name, String description) {

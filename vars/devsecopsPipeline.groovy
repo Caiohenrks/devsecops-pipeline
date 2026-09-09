@@ -6,7 +6,7 @@ def call(Map config = [:]) {
             GITLEAKS_IMAGE   = 'ghcr.io/gitleaks/gitleaks:v8.28.0'
             SEMGREP_IMAGE    = 'semgrep/semgrep:1.128.0'
             TRIVY_IMAGE      = 'aquasec/trivy:0.74.0'
-            CYCLONEDX_IMAGE  = 'ghcr.io/cyclonedx/cdxgen:v11'
+            CYCLONEDX_IMAGE  = 'ghcr.io/cdxgen/cdxgen:v12'
             COSIGN_IMAGE     = 'cgr.dev/chainguard/cosign:latest@sha256:2af5cabe038577e02b21be3b6e2622c2cd2659dcdef2bdc0fbf5f64e16965a88'
         }
 

@@ -49,7 +49,10 @@ def call(Map config = [:]) {
                             folder: 'services',
                             name: jobName,
                             displayName: repo,
-                            credentialsId: config.jenkinsCredentialsId ?: 'jenkins-api'
+                            credentialsId: config.jenkinsCredentialsId ?: 'jenkins-api',
+                            scmUrl: env.ssh_url,
+                            scmCredentialsId: config.scmCredentialsId ?: 'gitea-ssh',
+                            scmBranch: env.branch ?: 'main'
                         )
                         currentBuild.description = "dispatch ${fullName}"
                         echo "Disparando ${fullName}"
