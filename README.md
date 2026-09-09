@@ -4,6 +4,15 @@ Jenkins shared library (`@Library('devsecops')`). Repo canônico no Gitea: `admi
 
 O Jenkinsfile de cada microserviço tem três linhas. Scan, SBOM, build, Cosign e deploy ficam aqui.
 
+**Instalar num Jenkins (lab ou controller já existente):** [`docs/jenkins-install.md`](docs/jenkins-install.md) — agent Docker, plugins, Nexus/Gitea/k3s, credenciais, Trusted Library, job `dispatch` e webhook.
+
+| | |
+|---|---|
+| [O que é](#o-que-é) | [O que faz](#o-que-faz) |
+| [Contrato do serviço](#contrato-do-serviço) | [Job `dispatch`](#job-dispatch) |
+| [DORA](#dora-jenkins-dora-metric) | [Trusted Library](#jenkins--global-trusted-library) |
+| [Credenciais](#credenciais-jenkins-global) | [Manutenção](#como-manter--plano-de-continuidade) |
+
 ## O que é
 
 Dois entrypoints em `vars/`:
@@ -102,9 +111,15 @@ Relatórios arquivados em `reports/`:
 
 ## Job `dispatch`
 
+Passo a passo (New Item, webhook, plugins): [`docs/jenkins-install.md`](docs/jenkins-install.md).
+
 Pipeline script from SCM → `git@gitea:admin/devsecops-pipeline.git` (Jenkinsfile deste repo: `devsecopsDispatch()`). **Não** aponte o SCM para um microserviço.
 
-Rode **uma vez** (Build Now) para registrar o Generic Trigger. O `jenkinsEnsureJob` cria `services/<owner>-<repo>` se não existir e reescreve o `config.xml` a cada dispatch.
+1. New Item → name `dispatch` → Pipeline → SCM Git → credencial `gitea-ssh` → Script Path `Jenkinsfile`.
+2. **Build Now uma vez** — registra o Generic Trigger (`token=dispatch`). Sem isso o webhook do Gitea não tem o que chamar.
+3. Em cada app: webhook POST `http://jenkins:8080/generic-webhook-trigger/invoke?token=dispatch` (evento Push, JSON).
+
+O `jenkinsEnsureJob` cria `services/<owner>-<repo>` se não existir e reescreve o `config.xml` a cada dispatch.
 
 ```groovy
 jenkinsEnsureJob(folder: 'services', name: 'admin-piadas-java', displayName: 'admin/piadas-java')
@@ -174,6 +189,8 @@ Se o job `metrics` ainda existir no Jenkins, desabilite ou apague. Token `dora` 
 | Time to restore | Média FAILURE → próximo SUCCESS do mesmo job |
 
 ## Jenkins — Global Trusted Library
+
+Guia completo: [`docs/jenkins-install.md`](docs/jenkins-install.md#5-global-trusted-library). Plugins obrigatórios (Pipeline, Git, Generic Webhook Trigger, Kubernetes CLI, Folders, Email Extension, Workspace Cleanup, Credentials Binding) estão lá.
 
 Manage Jenkins → System → **Global Trusted Pipeline Libraries**:
 
@@ -389,11 +406,11 @@ IDs no Jenkins **não mudam**. Só o conteúdo da credencial.
 
 Compose em [`infra/`](infra/docker-compose.yml). Caches: `maven-cache` (`/root/.m2` no container Maven), `trivy-cache` montado em `/var/tmp/trivy` (um diretório por job/stage — o lock único do Trivy derruba o `CycloneDX image` se dois jobs compartilham o mesmo cache). Estado do Jenkins: volume do container.
 
-Subir o lab:
+Subir o lab e configurar o Jenkins: [`docs/jenkins-install.md`](docs/jenkins-install.md).
 
 ```powershell
 cd pipeline/infra
-copy .env.example .env   # preencha JENKINS_TOKEN
+copy .env.example .env   # preencha JENKINS_TOKEN (só o container DORA na :8090)
 docker compose up -d --build
 ```
 
