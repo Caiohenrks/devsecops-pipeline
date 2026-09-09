@@ -37,8 +37,6 @@ services:
       - JENKINS_USER=${JENKINS_USER:-admin}
       - JENKINS_TOKEN=${JENKINS_TOKEN}
       - JENKINS_FOLDER=services
-      - SLO=0.99
-      - GITEA_URL=http://gitea:3000
     networks:
       - devsecops-network
     depends_on:

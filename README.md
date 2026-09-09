@@ -155,7 +155,7 @@ O dispatcher **não** cria nem dispara métricas.
 
 Não é job Jenkins. É o container [`jenkins-dora-metric/`](../jenkins-dora-metric/) no compose (porta **8090**). Só **lê** a API (`JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN`) e o `LT Ns` que o serviço já grava na description.
 
-Página: [http://localhost:8090/](http://localhost:8090/) (compose) ou [http://localhost:30088/](http://localhost:30088/) (k3s, job `services/admin-jenkins-dora-metric`). Janelas 24h, 7d, 30d, 1 ano.
+Página: [http://localhost:8090/](http://localhost:8090/) (compose) ou [http://localhost:30088/](http://localhost:30088/) (k3s, job `services/admin-jenkins-dora-metric`). Janela fixa de 30 dias.
 
 No `pipeline/infra/.env` (não vai para o Git):
 
@@ -169,11 +169,9 @@ Se o job `metrics` ainda existir no Jenkins, desabilite ou apague. Token `dora` 
 | Métrica | Como o lab calcula |
 |---|---|
 | Lead time for changes | Média do `LT Ns` na description dos SUCCESS (commit do webhook → fim do job) |
-| Deployment frequency | SUCCESS / semana na janela escolhida |
+| Deployment frequency | SUCCESS / semana na janela de 30 dias |
 | Change failure rate | FAILURE / (SUCCESS + FAILURE) |
 | Time to restore | Média FAILURE → próximo SUCCESS do mesmo job |
-| Error budget consumption | Taxa de falha ÷ (1 − SLO 99%) |
-| Cobertura de runbooks | `docs/runbook.md` existe no Gitea (`main`) |
 
 ## Jenkins — Global Trusted Library
 
