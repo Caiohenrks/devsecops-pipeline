@@ -81,6 +81,10 @@ services:
       - 30081:30081
       - 30082:30082
       - 30083:30083
+      - 30084:30084
+      - 30085:30085
+      - 30086:30086
+      - 30087:30087
     volumes:
       - k3s-server-data:/var/lib/rancher/k3s
       - /sys/fs/cgroup:/sys/fs/cgroup:rw

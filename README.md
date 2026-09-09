@@ -102,12 +102,12 @@ Relatórios arquivados em `reports/`:
 
 ## Job `dispatch`
 
-Pipeline script from SCM → `git@gitea:admin/devsecops-pipeline.git` (Jenkinsfile deste repo: `devsecopsDispatch()`). **Não** aponte o SCM para `crud-user` / `piadas` / `agente`.
+Pipeline script from SCM → `git@gitea:admin/devsecops-pipeline.git` (Jenkinsfile deste repo: `devsecopsDispatch()`). **Não** aponte o SCM para um microserviço.
 
 Rode **uma vez** (Build Now) para registrar o Generic Trigger. O `jenkinsEnsureJob` cria `services/<owner>-<repo>` se não existir e reescreve o `config.xml` a cada dispatch.
 
 ```groovy
-jenkinsEnsureJob(folder: 'services', name: 'admin-piadas', displayName: 'admin/piadas')
+jenkinsEnsureJob(folder: 'services', name: 'admin-piadas-java', displayName: 'admin/piadas-java')
 ```
 
 O job gerado chama:
@@ -301,7 +301,7 @@ Se library e app mudarem no mesmo ciclo, publique a library **antes** do push do
 
 ### Novo microserviço
 
-1. Repo no Gitea com Jenkinsfile de três linhas, `Dockerfile` e `k8s/` (namespace, deployment com `PLACEHOLDER_IMAGE`, service).
+1. Repo no Gitea com Jenkinsfile de três linhas, `Dockerfile` e `k8s/` (namespace, deployment com `PLACEHOLDER_IMAGE`, service). Família de teste: `piadas-<linguagem>` (`piadas-java`, `piadas-python`, `piadas-node`, `piadas-go`, `piadas-dotnet`).
 2. Webhook Gitea → job `dispatch`, token `dispatch`.
 3. Primeiro push cria `services/<owner>-<repo>`. O SCM do job é reescrito a cada dispatch.
 
