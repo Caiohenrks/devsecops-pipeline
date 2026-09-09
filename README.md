@@ -119,6 +119,25 @@ devsecopsPipeline()
 
 Métricas (frequência, falha, lead time) leem o job do serviço, não o dispatcher.
 
+## Página DORA / continuidade
+
+Não é plugin. É o job `metrics` (`Jenkinsfile.metrics` → `devsecopsMetrics()`), no mesmo padrão do `dispatch`.
+
+O `dispatch` cria o job na raiz e dispara depois de cada serviço. Cron: a cada ~30 min.
+
+Página: [http://localhost:8080/userContent/dora/](http://localhost:8080/userContent/dora/)
+
+| Métrica | Como o lab calcula |
+|---|---|
+| Lead time for changes | Média do `LT Ns` na description dos SUCCESS (commit do webhook → fim do job) |
+| Deployment frequency | SUCCESS / semana na janela (30 dias) |
+| Change failure rate | FAILURE / (SUCCESS + FAILURE) |
+| Time to restore | Média FAILURE → próximo SUCCESS do mesmo job |
+| Error budget consumption | Taxa de falha ÷ (1 − SLO 99%) |
+| Cobertura de runbooks | `docs/runbook.md` existe no Gitea (`main`) |
+
+New Item manual, se o dispatch ainda não criou: Pipeline script from SCM → este repo → `Jenkinsfile.metrics`.
+
 ## Jenkins — Global Trusted Library
 
 Manage Jenkins → System → **Global Trusted Pipeline Libraries**:

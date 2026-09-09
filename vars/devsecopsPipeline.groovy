@@ -439,9 +439,12 @@ def call(Map config = [:]) {
 
         post {
             always {
-                archiveArtifacts artifacts: 'reports/*.json', allowEmptyArchive: true
                 script {
                     recordLeadTime()
+                    writeDoraReport()
+                }
+                archiveArtifacts artifacts: 'reports/*.json', allowEmptyArchive: true
+                script {
                     def toEmail = env.commitEmail ?: env.commit_email
                     if (!toEmail?.contains('@')) {
                         echo 'No commit author email; skipping notification'
@@ -495,6 +498,21 @@ def bindWebhookParams() {
     if (params.commit_email) { env.commit_email = params.commit_email }
     if (params.commit_author) { env.commit_author = params.commit_author }
     if (params.commit_timestamp) { env.commit_timestamp = params.commit_timestamp }
+}
+
+def writeDoraReport() {
+    if (!env.reportsDir) {
+        return
+    }
+    sh "mkdir -p '${env.reportsDir}'"
+    writeFile file: "${env.reportsDir}/dora.json", text: """{
+  "repo": "${env.repo_full_name ?: ''}",
+  "result": "${currentBuild.currentResult ?: ''}",
+  "leadTimeSeconds": "${env.LEAD_TIME_SECONDS ?: ''}",
+  "commit": "${env.commit ?: env.after ?: ''}",
+  "recordedAt": "${java.time.Instant.now()}"
+}
+"""
 }
 
 def recordLeadTime() {

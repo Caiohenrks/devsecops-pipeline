@@ -1,5 +1,6 @@
 def call(Map config = [:]) {
-    def folder = (config.folder ?: 'services') as String
+    def root = config.root == true
+    def folder = root ? '' : ((config.folder ?: 'services') as String)
     def name = (config.name ?: '') as String
     def displayName = (config.displayName ?: name) as String
     def credentialsId = (config.credentialsId ?: 'jenkins-api') as String
@@ -76,7 +77,8 @@ def call(Map config = [:]) {
         withEnv([
             "JENKINS_API_URL=${jenkinsUrl}",
             "JENKINS_JOB_FOLDER=${folder}",
-            "JENKINS_JOB_NAME=${name}"
+            "JENKINS_JOB_NAME=${name}",
+            "JENKINS_JOB_ROOT=${root ? '1' : '0'}"
         ]) {
             sh '''
                 set -eu
@@ -98,27 +100,35 @@ def call(Map config = [:]) {
                     esac
                 }
 
-                folder_url="$JENKINS_API_URL/job/$JENKINS_JOB_FOLDER"
-                job_url="$folder_url/job/$JENKINS_JOB_NAME"
-
-                if [ "$(status "$folder_url/api/json")" = "404" ]; then
-                    echo "Criando pasta $JENKINS_JOB_FOLDER"
-                    put_xml folder.xml "" "$JENKINS_API_URL/createItem?name=$JENKINS_JOB_FOLDER"
+                if [ "$JENKINS_JOB_ROOT" = "1" ]; then
+                    job_url="$JENKINS_API_URL/job/$JENKINS_JOB_NAME"
+                    create_url="$JENKINS_API_URL/createItem?name=$JENKINS_JOB_NAME"
+                    label="$JENKINS_JOB_NAME"
+                else
+                    folder_url="$JENKINS_API_URL/job/$JENKINS_JOB_FOLDER"
+                    job_url="$folder_url/job/$JENKINS_JOB_NAME"
+                    create_url="$folder_url/createItem?name=$JENKINS_JOB_NAME"
+                    label="$JENKINS_JOB_FOLDER/$JENKINS_JOB_NAME"
+                    if [ "$(status "$folder_url/api/json")" = "404" ]; then
+                        echo "Criando pasta $JENKINS_JOB_FOLDER"
+                        put_xml folder.xml "" "$JENKINS_API_URL/createItem?name=$JENKINS_JOB_FOLDER"
+                    fi
                 fi
 
                 if [ "$(status "$job_url/api/json")" = "404" ]; then
-                    echo "Criando job $JENKINS_JOB_FOLDER/$JENKINS_JOB_NAME"
-                    put_xml job.xml "" "$folder_url/createItem?name=$JENKINS_JOB_NAME"
+                    echo "Criando job $label"
+                    put_xml job.xml "" "$create_url"
                 else
-                    echo "Atualizando job $JENKINS_JOB_FOLDER/$JENKINS_JOB_NAME"
+                    echo "Atualizando job $label"
                     put_xml job.xml "-X POST" "$job_url/config.xml"
                 fi
             '''
         }
     }
 
-    echo "Job ${folder}/${name} → SCM ${scmUrl} (${scriptPath} @ */${scmBranch})"
-    return "${folder}/${name}"
+    def fullName = root ? name : "${folder}/${name}"
+    echo "Job ${fullName} → SCM ${scmUrl} (${scriptPath} @ */${scmBranch})"
+    return fullName
 }
 
 def giteaSshUrl(String raw) {
