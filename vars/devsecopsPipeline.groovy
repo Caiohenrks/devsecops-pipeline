@@ -329,7 +329,7 @@ def call(Map config = [:]) {
                                         docker run --rm --user 0 --volumes-from jenkins \
                                           --network infra_devsecops-network \
                                           "$COSIGN_IMAGE" \
-                                          attach sbom --yes \
+                                          attach sbom \
                                           --type cyclonedx \
                                           --sbom "$SBOM_PATH" \
                                           --allow-http-registry --allow-insecure-registry \
