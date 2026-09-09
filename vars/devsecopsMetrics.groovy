@@ -4,6 +4,13 @@ def call(Map config = [:]) {
 
         triggers {
             cron('H/30 * * * *')
+            GenericTrigger(
+                token: 'dora',
+                causeString: 'DORA refresh',
+                silentResponse: false,
+                regexpFilterText: '',
+                regexpFilterExpression: ''
+            )
         }
 
         stages {
@@ -41,7 +48,7 @@ def collectAndRender(String folder, int days, double slo) {
         def jobsJson = sh(
             returnStdout: true,
             script: """
-                curl -sf -u "\$JENKINS_API_USER:\$JENKINS_API_TOKEN" \
+                curl -sf -g -u "\$JENKINS_API_USER:\$JENKINS_API_TOKEN" \
                   '${jenkinsUrl}/job/${folder}/api/json?tree=jobs[name,displayName,url]'
             """
         ).trim()
@@ -50,7 +57,7 @@ def collectAndRender(String folder, int days, double slo) {
             def buildsJson = sh(
                 returnStdout: true,
                 script: """
-                    curl -sf -u "\$JENKINS_API_USER:\$JENKINS_API_TOKEN" \
+                    curl -sf -g -u "\$JENKINS_API_USER:\$JENKINS_API_TOKEN" \
                       '${jenkinsUrl}/job/${folder}/job/${job.name}/api/json?tree=builds[number,result,timestamp,duration,description]{0,80}'
                 """
             ).trim()
